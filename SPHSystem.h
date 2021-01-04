@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include "Particle.h"
 #include "Geometry.h"
+#define TABLE_SIZE 10000
 
 class SPHSystem
 {
@@ -24,8 +25,11 @@ private:
 	//initializes the particles that will be used
 	void initParticles();
 
-	//searches the neighbours of all particles
-	void searchNeighbours();
+	// Creates hash table for particles in infinite domain
+	Particle** particleTable;
+	void buildTable();
+	uint getHash(glm::ivec3 cell);
+	glm::ivec3 getCell(Particle *p);
 
 	// Updates position of all particles
 	// SPH should handle this instead of the particle class

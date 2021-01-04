@@ -14,6 +14,9 @@ public:
 	glm::vec3 position, velocity, acceleration;
 	glm::vec3 force;
 
+	// For linked list
+	Particle* next;
+
 	float density;
 	float pressure;
 	float id;

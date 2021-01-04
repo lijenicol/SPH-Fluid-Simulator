@@ -35,9 +35,15 @@ SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, f
 
 	//start init
 	started = false;
+
+	// Setup table size
+	particleTable = (Particle **)malloc(sizeof(Particle *) * TABLE_SIZE);
 }
 
 SPHSystem::~SPHSystem() {
+	// free table
+	free(particleTable);
+
 	//delete particles
 	particles.clear();
 	particles.shrink_to_fit();
@@ -75,21 +81,35 @@ void SPHSystem::initParticles() {
 // Lastly updates particle positions
 void SPHSystem::update(float deltaTime) {
 	if (!started) return;
-	deltaTime = 0.001f;
-		
-	//find the neighbours of all particles
-	searchNeighbours();
+	deltaTime = 0.003f;
+
+	// build hash table
+	buildTable();
 
 	//CALCULATE DENSITY AND PRESSURES
 	for (int i = 0; i < particles.size(); i++) {
 		float pDensity = 0;
 		Particle* pi = particles[i];
+		glm::ivec3 cell = getCell(pi);
 
-		//DENSITY USING ALL PARTICLES
-		for (int j = 0; j < neighbouringParticles[i].size(); j++) {
-			Particle* pj = neighbouringParticles[i][j];
-			float dist2 = glm::length2(pj->position - pi->position);
-			pDensity += MASS * POLY6 * glm::pow(H2 - dist2, 3);
+		// use hash table
+		for (int x = -1; x <= 1; x++) {
+			for (int y = -1; y <= 1; y++) {
+				for (int z = -1; z <= 1; z++) {
+					glm::ivec3 near_cell = cell + glm::ivec3(x, y, z);
+					uint index = getHash(near_cell);
+					Particle* pj = particleTable[index];
+					
+					// Iterate through cell linked list
+					while (pj != NULL) {
+						float dist2 = glm::length2(pj->position - pi->position);
+						if (dist2 < H2 && pi != pj) {
+							pDensity += MASS * POLY6 * glm::pow(H2 - dist2, 3);
+						}
+						pj = pj->next;
+					}
+				}
+			}
 		}
 		
 		// Include self density (as itself isn't included in neighbour)
@@ -104,23 +124,37 @@ void SPHSystem::update(float deltaTime) {
 	for (int i = 0; i < particles.size(); i++) {
 		Particle* pi = particles[i];
 		pi->force = glm::vec3(0);
+		glm::ivec3 cell = getCell(pi);
 
-		for (int j = 0; j < neighbouringParticles[i].size(); j++) {
-			Particle* pj = neighbouringParticles[i][j];
+		for (int x = -1; x <= 1; x++) {
+			for (int y = -1; y <= 1; y++) {
+				for (int z = -1; z <= 1; z++) {
+					glm::ivec3 near_cell = cell + glm::ivec3(x, y, z);
+					uint index = getHash(near_cell);
+					Particle* pj = particleTable[index];
 
-			//unit direction and length
-			float dist = glm::length(pj->position - pi->position);
-			glm::vec3 dir = glm::normalize(pj->position - pi->position);
+					// Iterate through cell linked list
+					while (pj != NULL) {
+						float dist2 = glm::length2(pj->position - pi->position);
+						if (dist2 < H2 && pi != pj) {
+							//unit direction and length
+							float dist = sqrt(dist2);
+							glm::vec3 dir = glm::normalize(pj->position - pi->position);
 
-			//apply pressure force
-			glm::vec3 pressureForce = -dir * MASS * (pi->pressure + pj->pressure) / (2 * pj->density) * SPIKY_GRAD;
-			pressureForce *= std::pow(h - dist, 2);
-			pi->force += pressureForce;
+							//apply pressure force
+							glm::vec3 pressureForce = -dir * MASS * (pi->pressure + pj->pressure) / (2 * pj->density) * SPIKY_GRAD;
+							pressureForce *= std::pow(h - dist, 2);
+							pi->force += pressureForce;
 
-			//apply viscosity force
-			glm::vec3 velocityDif = pj->velocity - pi->velocity;
-			glm::vec3 viscoForce = viscosity * MASS * (velocityDif / pj->density) * SPIKY_LAP * (h - dist);
-			pi->force += viscoForce;
+							//apply viscosity force
+							glm::vec3 velocityDif = pj->velocity - pi->velocity;
+							glm::vec3 viscoForce = viscosity * MASS * (velocityDif / pj->density) * SPIKY_LAP * (h - dist);
+							pi->force += viscoForce;
+						}
+						pj = pj->next;
+					}
+				}
+			}
 		}
 	}
 
@@ -140,8 +174,8 @@ void SPHSystem::updateParticles(float deltaTime) {
 		p->position += p->velocity * deltaTime;
 
 		// Handle collisions with box
-		float boxWidth = 0.5f;
-		float elasticity = 0.15f;
+		float boxWidth = 2.f;
+		float elasticity = 0.5f;
 		if (p->position.y < p->size) {
 			p->position.y = -p->position.y + 2 * p->size + 0.0001f;
 			p->velocity.y = -p->velocity.y * elasticity;
@@ -178,26 +212,42 @@ void SPHSystem::draw(glm::mat4 viewProjMtx, GLuint shader) {
 	}
 }
 
-void SPHSystem::searchNeighbours() {
-	for (int i = 0; i < particles.size(); i++) {
-		std::vector<Particle*> nbParticles;
-
-		for (int j = 0; j < particles.size(); j++) {
-			//dont check the particle against itself
-			if (i == j) continue;
-
-			//find distance
-			glm::vec3 s1 = particles[i]->position;
-			glm::vec3 s2 = particles[j]->position;
-			float distance = glm::length(s2 - s1);
-			
-			//append if distance is less than h
-			if (distance <= h) {
-				nbParticles.push_back(particles[j]);
-			}
-		}
-		neighbouringParticles[i] = nbParticles;
+void SPHSystem::buildTable() {
+	// Empty the table
+	for (int i = 0; i < TABLE_SIZE; i++) {
+		particleTable[i] = NULL;
 	}
+
+	// Populate table
+	Particle* pi;
+	for (int i = 0; i < particles.size(); i++) {
+		pi = particles[i];
+
+		// Calculate hash index using hashing formula
+		uint index = getHash(getCell(pi));
+
+		// Setup linked list if need be
+		if (particleTable[index] == NULL) {
+			pi->next = NULL;
+			particleTable[index] = pi;
+		}
+		else {
+			pi->next = particleTable[index];
+			particleTable[index] = pi;
+		}
+	}
+}
+
+uint SPHSystem::getHash(glm::ivec3 cell) {
+	cell.x *= 73856093;
+	cell.y *= 19349663;
+	cell.z *= 83492791;
+
+	return ((uint)cell.x ^ (uint)cell.y ^ (uint)cell.z) % TABLE_SIZE;
+}
+
+glm::ivec3 SPHSystem::getCell(Particle* p) {
+	return glm::ivec3(p->position.x / h, p->position.y / h, p->position.z / h);
 }
 
 void SPHSystem::print() {

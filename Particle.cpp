@@ -16,6 +16,8 @@ Particle::Particle(float mass, float size, glm::vec3 position, glm::vec3 velocit
 	density = 0.0f;
 	pressure = 0.0f;
 	id = pCount++;
+
+	next = NULL;
 }
 
 Particle::~Particle() {}
