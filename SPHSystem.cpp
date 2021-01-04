@@ -2,8 +2,10 @@
 #include <iostream>
 #include <cstdlib>
 #include <glm/gtx/string_cast.hpp>
+#include <glm/gtx/norm.hpp>
+#define PI 3.14159265f
 
-SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, float viscosity, float h, float g, float tension) {
+SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, float gasConst, float viscosity, float h, float g, float tension) {
 	this->numParticles = numParticles;
 	this->restDensity = restDensity;
 	this->viscosity = viscosity;
@@ -11,11 +13,13 @@ SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, f
 	this->g = g;
 	this->tension = tension;
 
-	POLY6 = 315.0f / (64.0f * glm::pi<float>() * pow(h, 9));
-	SPIKY_GRAD = -45.0f / (glm::pi<float>() * pow(h, 6));
-	SPIKY_LAP = 45.0f / (glm::pi<float>() * pow(h, 6));
+	POLY6 = 315.0f / (64.0f * PI * pow(h, 9));
+	SPIKY_GRAD = -45.0f / (PI * pow(h, 6));
+	SPIKY_LAP = 45.0f / (PI * pow(h, 6));
 	MASS = mass;
-	GAS_CONSTANT = 2000.f;
+	GAS_CONSTANT = gasConst;
+	H2 = h * h;
+	SELF_DENS = MASS * POLY6 * pow(h, 6);
 
 	//setup densities & volume
 	int cbNumParticles = numParticles * numParticles * numParticles;
@@ -45,19 +49,18 @@ SPHSystem::~SPHSystem() {
 
 void SPHSystem::initParticles() {
 	std::srand(1024);
-	float particleSeperation = h;
+	float particleSeperation = h + 0.01f;
 	for (int i = 0; i < numParticles; i++) {
 		for (int j = 0; j < numParticles; j++) {
 			for (int k = 0; k < numParticles; k++) {
 				// dam like particle positions
-				float ranX = (float(rand()) / float((RAND_MAX)) * 2.f - 1) * h / 10;
-				float ranY = (float(rand()) / float((RAND_MAX)) * 2.f - 1) * h / 10;
-				float ranZ = (float(rand()) / float((RAND_MAX)) * 2.f - 1) * h / 10;
-				glm::vec3 nParticlePos = glm::vec3(i * h + ranX, j * h + ranY + h, k * h + ranZ);
+				float ranX = (float(rand()) / float((RAND_MAX)) * 0.5f - 1) * h / 10;
+				float ranY = (float(rand()) / float((RAND_MAX)) * 0.5f - 1) * h / 10;
+				float ranZ = (float(rand()) / float((RAND_MAX)) * 0.5f - 1) * h / 10;
+				glm::vec3 nParticlePos = glm::vec3(i * particleSeperation + ranX - 0.25f, j * particleSeperation + ranY + h + 0.5f, k * particleSeperation + ranZ - 0.25f);
 
 				//create new particle
-				Particle* nParticle = new Particle(MASS, h / 2.f, 0.04f, 0.0f,
-					nParticlePos, glm::vec3(0), false);
+				Particle* nParticle = new Particle(MASS, h,	nParticlePos, glm::vec3(0));
 
 				//append particle
 				particles[i + (j + numParticles * k) * numParticles] = nParticle;
@@ -66,14 +69,16 @@ void SPHSystem::initParticles() {
 	}
 }
 
+// Main update loop
+// First finds neighbours of all particles, then calculates pressures
+// Calculates pressure force and viscosity force
+// Lastly updates particle positions
 void SPHSystem::update(float deltaTime) {
 	if (!started) return;
-
+	deltaTime = 0.001f;
+		
 	//find the neighbours of all particles
 	searchNeighbours();
-
-	//EDIT THIS OUT AFTERWARDS
-	deltaTime = 0.003f;
 
 	//CALCULATE DENSITY AND PRESSURES
 	for (int i = 0; i < particles.size(); i++) {
@@ -83,47 +88,84 @@ void SPHSystem::update(float deltaTime) {
 		//DENSITY USING ALL PARTICLES
 		for (int j = 0; j < neighbouringParticles[i].size(); j++) {
 			Particle* pj = neighbouringParticles[i][j];
-			float dist = glm::length(pj->getPosition() - pi->getPosition());
-			pDensity += pj->getMass() * POLY6 * glm::pow((h * h) - (dist * dist), 3);
+			float dist2 = glm::length2(pj->position - pi->position);
+			pDensity += MASS * POLY6 * glm::pow(H2 - dist2, 3);
 		}
-		pi->density = pDensity + pi->getMass() * POLY6 * glm::pow(h, 6);
+		
+		// Include self density (as itself isn't included in neighbour)
+		pi->density = pDensity + SELF_DENS;
 
-		//calculate pressure
-		float pPressure = GAS_CONSTANT * (glm::pow((pi->density / restDensity), 7) - 1.f);
-		pi->pressure = pPressure; 
+		// Calculate pressure
+		float pPressure = GAS_CONSTANT * (pi->density - restDensity);
+		pi->pressure = pPressure;
 	}
 
 	//CALCULATE FORCES
 	for (int i = 0; i < particles.size(); i++) {
 		Particle* pi = particles[i];
-		float vi = pi->getMass() / pi->density;	// Volume of particle i
+		pi->force = glm::vec3(0);
+
 		for (int j = 0; j < neighbouringParticles[i].size(); j++) {
 			Particle* pj = neighbouringParticles[i][j];
 
 			//unit direction and length
-			float dist = glm::length(pj->getPosition() - pi->getPosition());
-			glm::vec3 dir = glm::normalize(pj->getPosition() - pi->getPosition());
-
-			//calculate volumes of pi and pj
-			float vj = pj->getMass() / pj->density;
+			float dist = glm::length(pj->position - pi->position);
+			glm::vec3 dir = glm::normalize(pj->position - pi->position);
 
 			//apply pressure force
-			glm::vec3 pressureForce = -dir * (vi * vj * ((pi->pressure + pj->pressure)) / 2.0f) * SPIKY_GRAD * glm::pow(h - dist, 2);
-			pi->applyForce(pressureForce);
+			glm::vec3 pressureForce = -dir * MASS * (pi->pressure + pj->pressure) / (2 * pj->density) * SPIKY_GRAD;
+			pressureForce *= std::pow(h - dist, 2);
+			pi->force += pressureForce;
 
 			//apply viscosity force
-			glm::vec3 velocityDif = pj->getVelocity() - pi->getVelocity();
-			glm::vec3 viscoForce = dir * (vi * vj * viscosity * velocityDif) * SPIKY_LAP * (h - dist);
-			pi->applyForce(viscoForce);
+			glm::vec3 velocityDif = pj->velocity - pi->velocity;
+			glm::vec3 viscoForce = viscosity * MASS * (velocityDif / pj->density) * SPIKY_LAP * (h - dist);
+			pi->force += viscoForce;
 		}
-
-		//apply gravity force
-		pi->applyForce(glm::vec3(0, g * pi->getMass(), 0));
 	}
 
 	//update particle positions
+	updateParticles(deltaTime);
+}
+
+void SPHSystem::updateParticles(float deltaTime) {
 	for (int i = 0; i < particles.size(); i++) {
-		particles[i]->update(deltaTime);
+		Particle *p = particles[i];
+
+		//calculate acceleration and velocity
+		glm::vec3 acceleration = p->force / p->density + glm::vec3(0,g,0);
+		p->velocity += acceleration * deltaTime;
+		
+		// Update position
+		p->position += p->velocity * deltaTime;
+
+		// Handle collisions with box
+		float boxWidth = 0.5f;
+		float elasticity = 0.15f;
+		if (p->position.y < p->size) {
+			p->position.y = -p->position.y + 2 * p->size + 0.0001f;
+			p->velocity.y = -p->velocity.y * elasticity;
+		}
+
+		if (p->position.x < p->size - boxWidth) {
+			p->position.x = -p->position.x + 2 * (p->size - boxWidth) + 0.0001f;
+			p->velocity.x = -p->velocity.x * elasticity;
+		}
+
+		if (p->position.x > -p->size + boxWidth) {
+			p->position.x = -p->position.x + 2 * -(p->size - boxWidth) - 0.0001f;
+			p->velocity.x = -p->velocity.x * elasticity;
+		}
+
+		if (p->position.z < p->size - boxWidth) {
+			p->position.z = -p->position.z + 2 * (p->size - boxWidth) + 0.0001f;
+			p->velocity.z = -p->velocity.z * elasticity;
+		}
+
+		if (p->position.z > -p->size + boxWidth) {
+			p->position.z = -p->position.z + 2 * -(p->size - boxWidth) - 0.0001f;
+			p->velocity.z = -p->velocity.z * elasticity;
+		}
 	}
 }
 
@@ -131,7 +173,7 @@ void SPHSystem::draw(glm::mat4 viewProjMtx, GLuint shader) {
 	//draw each of the particles
 	for (int i = 0; i < particles.size(); i++) {
 		//calculate transformation matrix for sphere
-		glm::mat4 translate = glm::translate(particles[i]->getPosition());
+		glm::mat4 translate = glm::translate(particles[i]->position);
 		sphere->draw(translate * sphereScale, viewProjMtx, shader);
 	}
 }
@@ -145,8 +187,8 @@ void SPHSystem::searchNeighbours() {
 			if (i == j) continue;
 
 			//find distance
-			glm::vec3 s1 = particles[i]->getPosition();
-			glm::vec3 s2 = particles[j]->getPosition();
+			glm::vec3 s1 = particles[i]->position;
+			glm::vec3 s2 = particles[j]->position;
 			float distance = glm::length(s2 - s1);
 			
 			//append if distance is less than h

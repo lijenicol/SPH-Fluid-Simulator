@@ -15,7 +15,7 @@ private:
 	bool started;
 
 	//kernel/fluid constants
-	float POLY6, SPIKY_GRAD, SPIKY_LAP, GAS_CONSTANT, MASS;
+	float POLY6, SPIKY_GRAD, SPIKY_LAP, GAS_CONSTANT, MASS, H2, SELF_DENS;
 
 	//fluid properties
 	float restDensity;
@@ -27,12 +27,16 @@ private:
 	//searches the neighbours of all particles
 	void searchNeighbours();
 
-	// Sphere geometry 
+	// Updates position of all particles
+	// SPH should handle this instead of the particle class
+	void updateParticles(float deltaTime);
+
+	// Sphere geometry for rendering
 	Geometry* sphere;
 	glm::mat4 sphereScale;
 
 public:
-	SPHSystem(unsigned int numParticles, float mass, float restDensity, float viscosity, float h, float g, float tension);
+	SPHSystem(unsigned int numParticles, float mass, float restDensity, float gasConst, float viscosity, float h, float g, float tension);
 	~SPHSystem();
 
 	//updates the SPH system

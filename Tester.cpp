@@ -37,8 +37,8 @@ static void mousemotion(int x, int y)					{TESTER->MouseMotion(x,y);}
 ////////////////////////////////////////////////////////////////////////////////
 
 Tester::Tester(const char *windowTitle,int argc,char **argv) {
-	WinX=800;
-	WinY=600;
+	WinX=1280;
+	WinY=720;
 	LeftDown=MiddleDown=RightDown=false;
 	MouseX=MouseY=0;
 	prevTime = 0;
@@ -91,7 +91,7 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 	plane = new Plane();
 
 	//init SPH system
-	sphSystem = new SPHSystem(5, 0.02f, 1000, 0.04f, 0.04f, -9.8f, 0.2f);
+	sphSystem = new SPHSystem(5, 0.02f, 1000, 2000, 0.04f, 0.04f, -9.8f, 0.2f);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -153,10 +153,11 @@ void Tester::Draw() {
 	ImGui_ImplGLUT_NewFrame();
 	{
 		static int numParticles = 5;
-		static float nMass = 0.065f;
+		static float nMass = 0.2;
 		static float nh = 0.065f;
 		static float nRest = 1000.f;
 		static float nVisco = 3.5f;
+		static float gasConst = 3.5f;
 		static int counter = 0;
 
 		ImGui::Begin("SPH debug");                          // Create GUI window
@@ -168,10 +169,11 @@ void Tester::Draw() {
 		ImGui::SliderFloat("Support Radius", &nh, 0.001f, 1.f);            // Edit support radius
 		ImGui::SliderFloat("Rest Density", &nRest, 0.001f, 2000.f);            // Edit rest density
 		ImGui::SliderFloat("Viscosity Constant", &nVisco, 0.001f, 5.f);            // Edit viscosity
+		ImGui::SliderFloat("Gas Constant", &gasConst, 0.001f, 5.f);            // Edit gas constant
 
 		if (ImGui::Button("RESET")) {
 			delete sphSystem;
-			sphSystem = new SPHSystem(numParticles, nMass, nRest, nVisco, nh, -9.8, 1.f);
+			sphSystem = new SPHSystem(numParticles, nMass, nRest, gasConst, nVisco, nh, -9.8, 1.f);
 		}
 
 		ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
