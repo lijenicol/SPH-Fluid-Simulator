@@ -54,7 +54,7 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 	glutSetWindow( WindowHandle );
 
 	// Background color
-	glClearColor( 0., 0., 0., 1. );
+	glClearColor( 0.99, 0.36, 0.33, 1. );
 
 	// Callbacks
 	glutDisplayFunc( display );
@@ -92,7 +92,7 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 	plane = new Plane();
 
 	//init SPH system
-	sphSystem = new SPHSystem(5, 0.02f, 1000, 2000, 0.04f, 0.04f, -9.8f, 0.2f);
+	sphSystem = new SPHSystem(15, 0.02f, 1000, 1, 1.04f, 0.15f, -9.8f, 0.2f);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

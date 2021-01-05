@@ -30,7 +30,7 @@ SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, f
 	initParticles();
 
 	// Load in sphere geometry and allocate matrice space
-	sphere = new Geometry("sphere.obj");
+	sphere = new Geometry("lowsphere.obj");
 	sphereScale = glm::scale(glm::vec3(h/2.f));
 	sphereModelMtxs = new glm::mat4[cbNumParticles];
 	
@@ -88,7 +88,7 @@ void SPHSystem::initParticles() {
 				float ranX = (float(rand()) / float((RAND_MAX)) * 0.5f - 1) * h / 10;
 				float ranY = (float(rand()) / float((RAND_MAX)) * 0.5f - 1) * h / 10;
 				float ranZ = (float(rand()) / float((RAND_MAX)) * 0.5f - 1) * h / 10;
-				glm::vec3 nParticlePos = glm::vec3(i * particleSeperation + ranX - 0.25f, j * particleSeperation + ranY + h + 0.5f, k * particleSeperation + ranZ - 0.25f);
+				glm::vec3 nParticlePos = glm::vec3(i * particleSeperation + ranX - 1.5f, j * particleSeperation + ranY + h + 0.1f, k * particleSeperation + ranZ - 1.5f);
 
 				//create new particle
 				Particle* nParticle = new Particle(MASS, h,	nParticlePos, glm::vec3(0));

@@ -11,7 +11,7 @@ Plane::Plane() {
 
 	//extend vertices of plane by some multiple
 	for (int i = 0; i < 12; i++) {
-		vertices[i] *= 10.0f;
+		vertices[i] *= 1000.0f;
 	}
 
 	//normals of plane
