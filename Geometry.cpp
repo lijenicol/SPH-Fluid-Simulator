@@ -126,16 +126,15 @@ void Geometry::init(std::string filename) {
 	//Send normal data to gpu
 	glBindBuffer(GL_ARRAY_BUFFER, vbo_n);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec3) * normals.size(), normals.data(), GL_STATIC_DRAW);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), 0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 	//Bind to the EBO 
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
 	//Send the information to the gpu
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * indices.size(), indices.data(), GL_STATIC_DRAW);
 	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), 0);
-
-	// Unbind from the VBO.
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	
 	// Unbind from the VAO.
 	glBindVertexArray(0);
 }
@@ -154,8 +153,8 @@ void Geometry::draw(const glm::mat4& modelMtx, const glm::mat4& viewProjMtx, uin
 
 	// Set model view matrix
 	glUniformMatrix4fv(glGetUniformLocation(shader, "ModelMtx"), 1, false, (float*)&modelMtx);
-	glm::mat4 mvpMtx = viewProjMtx * modelMtx;
-	glUniformMatrix4fv(glGetUniformLocation(shader, "ModelViewProjMtx"), 1, false, (float*)&mvpMtx);
+	glm::mat4 mvpMtx = viewProjMtx;
+	glUniformMatrix4fv(glGetUniformLocation(shader, "viewProjMtx"), 1, false, (float*)&mvpMtx);
 
 	// Bind to the VAO.
 	glBindVertexArray(vao);

@@ -84,6 +84,7 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 
 	// Initialize components
 	Program=new ShaderProgram("Model.glsl",ShaderProgram::eRender);
+	InstanceProgram=new ShaderProgram("Instance.glsl",ShaderProgram::eRender);
 	Cam=new Camera;
 	Cam->SetAspect(float(WinX)/float(WinY));
 
@@ -146,7 +147,7 @@ void Tester::Draw() {
 	plane->draw(Cam->GetViewProjectMtx(), Program->GetProgramID());
 
 	// Draw sph system
-	sphSystem->draw(Cam->GetViewProjectMtx(), Program->GetProgramID());
+	sphSystem->draw(Cam->GetViewProjectMtx(), InstanceProgram->GetProgramID());
 
 	// Render GUI
 	ImGui_ImplOpenGL2_NewFrame();

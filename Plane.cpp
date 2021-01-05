@@ -67,8 +67,8 @@ void Plane::draw(glm::mat4 viewProjMtx, GLuint shader) {
 	glUseProgram(shader);
 	glUniformMatrix4fv(glGetUniformLocation(shader, "ModelMtx"), 1, false, (float*)&modelMtx);
 
-	glm::mat4 mvpMtx = viewProjMtx * modelMtx;
-	glUniformMatrix4fv(glGetUniformLocation(shader, "ModelViewProjMtx"), 1, false, (float*)&mvpMtx);
+	glm::mat4 mvpMtx = viewProjMtx;
+	glUniformMatrix4fv(glGetUniformLocation(shader, "viewProjMtx"), 1, false, (float*)&mvpMtx);
 
 	// Bind to the VAO.
 	glBindVertexArray(vao);

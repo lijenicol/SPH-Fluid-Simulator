@@ -44,7 +44,7 @@ private:
 	int MouseX,MouseY;
 	
 	// Components
-	ShaderProgram *Program;
+	ShaderProgram *Program, *InstanceProgram;
 	Camera *Cam;
 	Plane* plane;
 	SPHSystem* sphSystem;

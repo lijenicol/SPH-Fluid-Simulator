@@ -4,7 +4,7 @@
 #include <glm/glm.hpp>
 #include "Particle.h"
 #include "Geometry.h"
-#define TABLE_SIZE 10000
+#define TABLE_SIZE 1000000
 
 class SPHSystem
 {
@@ -38,6 +38,8 @@ private:
 	// Sphere geometry for rendering
 	Geometry* sphere;
 	glm::mat4 sphereScale;
+	glm::mat4* sphereModelMtxs;
+	GLuint vbo;
 
 public:
 	SPHSystem(unsigned int numParticles, float mass, float restDensity, float gasConst, float viscosity, float h, float g, float tension);

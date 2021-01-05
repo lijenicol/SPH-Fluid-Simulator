@@ -29,20 +29,45 @@ SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, f
 	//initialize particles
 	initParticles();
 
-	// Load in sphere geometry for rendering particles
+	// Load in sphere geometry and allocate matrice space
 	sphere = new Geometry("sphere.obj");
 	sphereScale = glm::scale(glm::vec3(h/2.f));
+	sphereModelMtxs = new glm::mat4[cbNumParticles];
+	
+	// Generate VBO for sphere model matrices
+	glGenBuffers(1, &vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo);
+	glBufferData(GL_ARRAY_BUFFER, particles.size() * sizeof(glm::mat4), &sphereModelMtxs[0], GL_DYNAMIC_DRAW);
+
+	// Setup instance VAO
+	glBindVertexArray(sphere->vao);
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(glm::vec4), 0);
+	glEnableVertexAttribArray(3);
+	glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(glm::vec4), (void*)sizeof(glm::vec4));
+	glEnableVertexAttribArray(4);
+	glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(glm::vec4), (void*)(sizeof(glm::vec4)*2));
+	glEnableVertexAttribArray(5);
+	glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(glm::vec4), (void*)(sizeof(glm::vec4)*3));
+
+	glVertexAttribDivisor(2,1);
+	glVertexAttribDivisor(3,1);
+	glVertexAttribDivisor(4,1);
+	glVertexAttribDivisor(5,1);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
 
 	//start init
 	started = false;
 
-	// Setup table size
+	// Allocate table memory
 	particleTable = (Particle **)malloc(sizeof(Particle *) * TABLE_SIZE);
 }
 
 SPHSystem::~SPHSystem() {
 	// free table
 	free(particleTable);
+	free(sphereModelMtxs);
 
 	//delete particles
 	particles.clear();
@@ -204,12 +229,26 @@ void SPHSystem::updateParticles(float deltaTime) {
 }
 
 void SPHSystem::draw(glm::mat4 viewProjMtx, GLuint shader) {
-	//draw each of the particles
+	// Calculate model matrices for each particle
 	for (int i = 0; i < particles.size(); i++) {
-		//calculate transformation matrix for sphere
 		glm::mat4 translate = glm::translate(particles[i]->position);
-		sphere->draw(translate * sphereScale, viewProjMtx, shader);
+		sphereModelMtxs[i] = translate * sphereScale;
 	}
+
+	// Send matrix data to GPU
+	glBindBuffer(GL_ARRAY_BUFFER, vbo);
+	void* data = glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+	memcpy(data, sphereModelMtxs, sizeof(glm::mat4) * particles.size());
+	glUnmapBuffer(GL_ARRAY_BUFFER);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+	// Draw instanced particles
+	glUseProgram(shader);
+	glUniformMatrix4fv(glGetUniformLocation(shader, "viewProjMtx"), 1, false, (float*)&viewProjMtx);
+	glBindVertexArray(sphere->vao);
+	glDrawElementsInstanced(GL_TRIANGLES, sphere->indices.size(), GL_UNSIGNED_INT, 0, particles.size());
+	glBindVertexArray(0);
+	glUseProgram(0);
 }
 
 void SPHSystem::buildTable() {
