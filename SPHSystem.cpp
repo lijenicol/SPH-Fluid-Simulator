@@ -199,7 +199,7 @@ void SPHSystem::updateParticles(float deltaTime) {
 		p->position += p->velocity * deltaTime;
 
 		// Handle collisions with box
-		float boxWidth = 2.f;
+		float boxWidth = 3.f;
 		float elasticity = 0.5f;
 		if (p->position.y < p->size) {
 			p->position.y = -p->position.y + 2 * p->size + 0.0001f;

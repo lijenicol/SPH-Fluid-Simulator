@@ -54,7 +54,7 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 	glutSetWindow( WindowHandle );
 
 	// Background color
-	glClearColor( 0.99, 0.36, 0.33, 1. );
+	glClearColor( 0.75, 0.75, 0.75, 1. );
 
 	// Callbacks
 	glutDisplayFunc( display );
@@ -144,7 +144,7 @@ void Tester::Draw() {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	// Draw plane
-	plane->draw(Cam->GetViewProjectMtx(), Program->GetProgramID());
+	//plane->draw(Cam->GetViewProjectMtx(), Program->GetProgramID());
 
 	// Draw sph system
 	sphSystem->draw(Cam->GetViewProjectMtx(), InstanceProgram->GetProgramID());
@@ -153,12 +153,12 @@ void Tester::Draw() {
 	ImGui_ImplOpenGL2_NewFrame();
 	ImGui_ImplGLUT_NewFrame();
 	{
-		static int numParticles = 5;
-		static float nMass = 0.2;
-		static float nh = 0.065f;
+		static int numParticles = 15;
+		static float nMass = 0.02;
+		static float nh = 0.15f;
 		static float nRest = 1000.f;
 		static float nVisco = 3.5f;
-		static float gasConst = 3.5f;
+		static float gasConst = 1.f;
 		static int counter = 0;
 
 		ImGui::Begin("SPH debug");                          // Create GUI window
