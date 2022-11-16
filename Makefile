@@ -1,4 +1,4 @@
-SRC_DIR := .
+SRC_DIR := src
 SRC_FILES := $(shell find $(SRC_DIR) -type f -name '*.cpp')
 
 BUILD_DIR = build
@@ -13,11 +13,11 @@ INCLUDE_DIRS = -I$(GLM_INCLUDE)
 .PHONY: clean
 
 sph: $(OBJ_FILES)
-	g++ -o $(BUILD_DIR)/$@ $^ $(LDFLAGS)
+	g++ -o $@ $^ $(LDFLAGS)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@ mkdir -p "$(@D)"
 	g++ $(CXXFLAGS) $(INCLUDE_DIRS) -c -o $@ $<
 
 clean:
-	rm -rf $(OBJ_DIR)
+	rm -rf $(BUILD_DIR)
