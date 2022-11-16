@@ -229,7 +229,7 @@ void SPHSystem::updateParticles(float deltaTime) {
 	}
 }
 
-void SPHSystem::draw(glm::mat4 viewProjMtx, GLuint shader) {
+void SPHSystem::draw(const glm::mat4& viewProjMtx, GLuint shader) {
 	// Calculate model matrices for each particle
 	for (int i = 0; i < particles.size(); i++) {
 		glm::mat4 translate = glm::translate(particles[i]->position);
@@ -278,12 +278,12 @@ void SPHSystem::buildTable() {
 	}
 }
 
-uint SPHSystem::getHash(glm::ivec3 cell) {
-	cell.x *= 73856093;
-	cell.y *= 19349663;
-	cell.z *= 83492791;
-
-	return ((uint)cell.x ^ (uint)cell.y ^ (uint)cell.z) % TABLE_SIZE;
+uint SPHSystem::getHash(const glm::ivec3& cell) {
+	return (
+		(uint)(cell.x * 73856093) 
+	  ^ (uint)(cell.y * 19349663) 
+	  ^ (uint)(cell.z * 83492791)
+	) % TABLE_SIZE;
 }
 
 glm::ivec3 SPHSystem::getCell(Particle* p) {

@@ -28,7 +28,7 @@ private:
 	// Creates hash table for particles in infinite domain
 	Particle** particleTable;
 	void buildTable();
-	uint getHash(glm::ivec3 cell);
+	uint getHash(const glm::ivec3& cell);
 	glm::ivec3 getCell(Particle *p);
 
 	// Updates position of all particles
@@ -49,7 +49,7 @@ public:
 	void update(float deltaTime);
 
 	//draws the SPH system & its particles
-	void draw(glm::mat4 viewProjMtx, GLuint shader);
+	void draw(const glm::mat4& viewProjMtx, GLuint shader);
 
 	void print();
 
