@@ -83,7 +83,7 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 	ImGui_ImplOpenGL2_Init();
 
 	// Initialize components
-	InstanceProgram=new ShaderProgram("Instance.glsl",ShaderProgram::eRender);
+	InstanceProgram=new ShaderProgram("resources/Instance.glsl",ShaderProgram::eRender);
 	Cam=new Camera;
 	Cam->SetAspect(float(WinX)/float(WinY));
 

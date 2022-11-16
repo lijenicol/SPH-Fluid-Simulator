@@ -31,7 +31,7 @@ SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, f
 	initParticles();
 
 	// Load in sphere geometry and allocate matrice space
-	sphere = new Geometry("lowsphere.obj");
+	sphere = new Geometry("resources/lowsphere.obj");
 	sphereScale = glm::scale(glm::vec3(h/2.f));
 	sphereModelMtxs = new glm::mat4[cbNumParticles];
 	
