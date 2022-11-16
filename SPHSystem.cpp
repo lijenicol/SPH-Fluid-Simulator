@@ -1,6 +1,7 @@
 #include "SPHSystem.h"
 #include <iostream>
 #include <cstdlib>
+#include <cstring>
 #include <glm/gtx/string_cast.hpp>
 #include <glm/gtx/norm.hpp>
 #define PI 3.14159265f
