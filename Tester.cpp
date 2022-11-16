@@ -83,13 +83,9 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 	ImGui_ImplOpenGL2_Init();
 
 	// Initialize components
-	Program=new ShaderProgram("Model.glsl",ShaderProgram::eRender);
 	InstanceProgram=new ShaderProgram("Instance.glsl",ShaderProgram::eRender);
 	Cam=new Camera;
 	Cam->SetAspect(float(WinX)/float(WinY));
-
-	//initialize plane (only for rendering)
-	plane = new Plane();
 
 	//init SPH system
 	sphSystem = new SPHSystem(15, 0.02f, 1000, 1, 1.04f, 0.15f, -9.8f, 0.2f);
@@ -98,7 +94,6 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 ////////////////////////////////////////////////////////////////////////////////
 
 Tester::~Tester() {
-	delete Program;
 	delete Cam;
 
 	// Cleanup imgui
@@ -142,9 +137,6 @@ void Tester::Draw() {
 	// Begin drawing scene
 	glViewport(0, 0, WinX, WinY);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-	// Draw plane
-	//plane->draw(Cam->GetViewProjectMtx(), Program->GetProgramID());
 
 	// Draw sph system
 	sphSystem->draw(Cam->GetViewProjectMtx(), InstanceProgram->GetProgramID());

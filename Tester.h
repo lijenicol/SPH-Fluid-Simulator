@@ -7,7 +7,6 @@
 #include "Core.h"
 #include "Shader.h"
 #include "Camera.h"
-#include "Plane.h"
 #include "SPHSystem.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -44,9 +43,8 @@ private:
 	int MouseX,MouseY;
 	
 	// Components
-	ShaderProgram *Program, *InstanceProgram;
+	ShaderProgram *InstanceProgram;
 	Camera *Cam;
-	Plane* plane;
 	SPHSystem* sphSystem;
 
 	//Time
