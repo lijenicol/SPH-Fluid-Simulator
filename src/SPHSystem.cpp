@@ -379,21 +379,6 @@ glm::ivec3 SPHSystem::getCell(Particle* p) const {
 	return glm::ivec3(p->position.x / h, p->position.y / h, p->position.z / h);
 }
 
-void SPHSystem::print() {
-	std::cout << "PARTICLE DENSITY AND PRESSURES: " << std::endl;
-	for (int i = 0; i < particles.size(); i++) {
-		std::cout << "PARTICLE: " << particles[i]->id << " " << std::endl;
-		std::cout << "DENSITY: " << particles[i]->density << " " << std::endl;
-		std::cout << "PRESSURE: " << particles[i]->pressure << " " << std::endl;
-		std::cout << "NEIGHBOURS [" << neighbouringParticles[i].size() << "]: ";
-		for (int j = 0; j < neighbouringParticles[i].size(); j++) {
-			std::cout << neighbouringParticles[i][j]->id << " ";
-		}
-		std::cout << std::endl;
-		std::cout << std::endl;
-	}
-}
-
 void SPHSystem::reset() {
 	initParticles();
 	started = false;

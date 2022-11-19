@@ -212,9 +212,6 @@ void Tester::Keyboard(int key,int x,int y) {
 			Reset();
 			sphSystem->reset();
 			break;
-		case 'p':
-			sphSystem->print();
-			break;
 		case 'c':
 			sphSystem->startSimulation();
 			break;

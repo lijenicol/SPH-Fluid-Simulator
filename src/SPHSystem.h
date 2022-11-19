@@ -59,8 +59,6 @@ public:
 	//draws the SPH system & its particles
 	void draw(const glm::mat4& viewProjMtx, GLuint shader);
 
-	void print();
-
 	void reset();
 	void startSimulation();
 };
