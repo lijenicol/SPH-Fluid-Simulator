@@ -1,10 +1,32 @@
 #include "SPHSystem.h"
+
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+
 #include <glm/gtx/string_cast.hpp>
 #include <glm/gtx/norm.hpp>
+
 #define PI 3.14159265f
+#define TABLE_SIZE 1000000
+
+// This will lock across all instances of SPHSystem's,
+// however since we only really have one instance, this
+// should be okay for now  
+std::mutex mtx;
+
+/**
+ * Hashes the position of a cell, giving where
+ * the cell goes in the particle table 
+ */
+uint getHash(const glm::ivec3& cell) {
+	return (
+		(uint)(cell.x * 73856093) 
+	  ^ (uint)(cell.y * 19349663) 
+	  ^ (uint)(cell.z * 83492791)
+	) % TABLE_SIZE;
+}
 
 SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, float gasConst, float viscosity, float h, float g, float tension) {
 	this->numParticles = numParticles;
@@ -63,6 +85,22 @@ SPHSystem::SPHSystem(unsigned int numParticles, float mass, float restDensity, f
 
 	// Allocate table memory
 	particleTable = (Particle **)malloc(sizeof(Particle *) * TABLE_SIZE);
+
+	// Init block boundaries (for funcs that loop through particles)
+	blockBoundaries[0] = 0;
+	int blockSize = particles.size() / THREAD_COUNT;
+	for (int i = 1; i < THREAD_COUNT; i++) {
+		blockBoundaries[i] = i * blockSize;
+	}
+	blockBoundaries[THREAD_COUNT] = particles.size();
+
+	// Init table block boundaries (for table clearing func)
+	tableBlockBoundaries[0] = 0;
+	blockSize = TABLE_SIZE / THREAD_COUNT;
+	for (int i = 1; i < THREAD_COUNT; i++) {
+		tableBlockBoundaries[i] = i * blockSize;
+	}
+	tableBlockBoundaries[THREAD_COUNT] = TABLE_SIZE;
 }
 
 SPHSystem::~SPHSystem() {
@@ -101,36 +139,30 @@ void SPHSystem::initParticles() {
 	}
 }
 
-// Main update loop
-// First finds neighbours of all particles, then calculates pressures
-// Calculates pressure force and viscosity force
-// Lastly updates particle positions
-void SPHSystem::update(float deltaTime) {
-	if (!started) return;
-	deltaTime = 0.003f;
-
-	// build hash table
-	buildTable();
-
-	//CALCULATE DENSITY AND PRESSURES
-	for (int i = 0; i < particles.size(); i++) {
+/**
+ * Parallel computation function for calculating density
+ * and pressures of particles in the given SPH System.
+ */
+void parallelDensityAndPressures(const SPHSystem& sphSystem, int start, int end) {
+	float massPoly6Product = sphSystem.MASS * sphSystem.POLY6;
+	
+	for (int i = start; i < end; i++) {
 		float pDensity = 0;
-		Particle* pi = particles[i];
-		glm::ivec3 cell = getCell(pi);
+		Particle* pi = sphSystem.particles[i];
+		glm::ivec3 cell = sphSystem.getCell(pi);
 
-		// use hash table
 		for (int x = -1; x <= 1; x++) {
 			for (int y = -1; y <= 1; y++) {
 				for (int z = -1; z <= 1; z++) {
 					glm::ivec3 near_cell = cell + glm::ivec3(x, y, z);
 					uint index = getHash(near_cell);
-					Particle* pj = particleTable[index];
+					Particle* pj = sphSystem.particleTable[index];
 					
 					// Iterate through cell linked list
 					while (pj != NULL) {
 						float dist2 = glm::length2(pj->position - pi->position);
-						if (dist2 < H2 && pi != pj) {
-							pDensity += MASS * POLY6 * glm::pow(H2 - dist2, 3);
+						if (dist2 < sphSystem.H2 && pi != pj) {
+							pDensity += massPoly6Product * glm::pow(sphSystem.H2 - dist2, 3);
 						}
 						pj = pj->next;
 					}
@@ -139,42 +171,47 @@ void SPHSystem::update(float deltaTime) {
 		}
 		
 		// Include self density (as itself isn't included in neighbour)
-		pi->density = pDensity + SELF_DENS;
+		pi->density = pDensity + sphSystem.SELF_DENS;
 
 		// Calculate pressure
-		float pPressure = GAS_CONSTANT * (pi->density - restDensity);
+		float pPressure = sphSystem.GAS_CONSTANT * (pi->density - sphSystem.restDensity);
 		pi->pressure = pPressure;
 	}
+}
 
-	//CALCULATE FORCES
-	for (int i = 0; i < particles.size(); i++) {
-		Particle* pi = particles[i];
+/**
+ * Parallel computation function for calculating forces
+ * of particles in the given SPH System.
+ */
+void parallelForces(const SPHSystem& sphSystem, int start, int end) {
+	for (int i = start; i < end; i++) {
+		Particle* pi = sphSystem.particles[i];
 		pi->force = glm::vec3(0);
-		glm::ivec3 cell = getCell(pi);
+		glm::ivec3 cell = sphSystem.getCell(pi);
 
 		for (int x = -1; x <= 1; x++) {
 			for (int y = -1; y <= 1; y++) {
 				for (int z = -1; z <= 1; z++) {
 					glm::ivec3 near_cell = cell + glm::ivec3(x, y, z);
 					uint index = getHash(near_cell);
-					Particle* pj = particleTable[index];
+					Particle* pj = sphSystem.particleTable[index];
 
 					// Iterate through cell linked list
 					while (pj != NULL) {
 						float dist2 = glm::length2(pj->position - pi->position);
-						if (dist2 < H2 && pi != pj) {
+						if (dist2 < sphSystem.H2 && pi != pj) {
 							//unit direction and length
 							float dist = sqrt(dist2);
 							glm::vec3 dir = glm::normalize(pj->position - pi->position);
 
 							//apply pressure force
-							glm::vec3 pressureForce = -dir * MASS * (pi->pressure + pj->pressure) / (2 * pj->density) * SPIKY_GRAD;
-							pressureForce *= std::pow(h - dist, 2);
+							glm::vec3 pressureForce = -dir * sphSystem.MASS * (pi->pressure + pj->pressure) / (2 * pj->density) * sphSystem.SPIKY_GRAD;
+							pressureForce *= std::pow(sphSystem.h - dist, 2);
 							pi->force += pressureForce;
 
 							//apply viscosity force
 							glm::vec3 velocityDif = pj->velocity - pi->velocity;
-							glm::vec3 viscoForce = viscosity * MASS * (velocityDif / pj->density) * SPIKY_LAP * (h - dist);
+							glm::vec3 viscoForce = sphSystem.viscosity * sphSystem.MASS * (velocityDif / pj->density) * sphSystem.SPIKY_LAP * (sphSystem.h - dist);
 							pi->force += viscoForce;
 						}
 						pj = pj->next;
@@ -183,17 +220,18 @@ void SPHSystem::update(float deltaTime) {
 			}
 		}
 	}
-
-	//update particle positions
-	updateParticles(deltaTime);
 }
 
-void SPHSystem::updateParticles(float deltaTime) {
-	for (int i = 0; i < particles.size(); i++) {
-		Particle *p = particles[i];
+/**
+ * Parallel computation function moving positions
+ * of particles in the given SPH System.
+ */
+void parallelUpdateParticlePositions(const SPHSystem& sphSystem, float deltaTime, int start, int end) {
+	for (int i = start; i < end; i++) {
+		Particle *p = sphSystem.particles[i];
 
 		//calculate acceleration and velocity
-		glm::vec3 acceleration = p->force / p->density + glm::vec3(0,g,0);
+		glm::vec3 acceleration = p->force / p->density + glm::vec3(0, sphSystem.g, 0);
 		p->velocity += acceleration * deltaTime;
 		
 		// Update position
@@ -229,6 +267,40 @@ void SPHSystem::updateParticles(float deltaTime) {
 	}
 }
 
+void SPHSystem::update(float deltaTime) {
+	if (!started) return;
+	
+	// To increase system stability, a fixed deltaTime is set
+	deltaTime = 0.003f;
+
+	// Build particle hash table
+	buildTable();
+
+	// Calculate densities and pressures of particles
+	for (int i = 0; i < THREAD_COUNT; i++) {
+		threads[i] = std::thread(parallelDensityAndPressures, std::ref(*this), blockBoundaries[i], blockBoundaries[i + 1]);
+	}
+	for (std::thread& thread : threads) {
+		thread.join();
+	}
+
+	// Calclulate forces of particles
+	for (int i = 0; i < THREAD_COUNT; i++) {
+		threads[i] = std::thread(parallelForces, std::ref(*this), blockBoundaries[i], blockBoundaries[i + 1]);
+	}
+	for (std::thread& thread : threads) {
+		thread.join();
+	}
+
+	// Update positions of all particles
+	for (int i = 0; i < THREAD_COUNT; i++) {
+		threads[i] = std::thread(parallelUpdateParticlePositions, std::ref(*this), deltaTime, blockBoundaries[i], blockBoundaries[i + 1]);
+	}
+	for (std::thread& thread : threads) {
+		thread.join();
+	}
+}
+
 void SPHSystem::draw(const glm::mat4& viewProjMtx, GLuint shader) {
 	// Calculate model matrices for each particle
 	for (int i = 0; i < particles.size(); i++) {
@@ -252,41 +324,58 @@ void SPHSystem::draw(const glm::mat4& viewProjMtx, GLuint shader) {
 	glUseProgram(0);
 }
 
-void SPHSystem::buildTable() {
-	// Empty the table
-	for (int i = 0; i < TABLE_SIZE; i++) {
-		particleTable[i] = NULL;
+/**
+ * Parallel helper for clearing table 
+ */
+void tableClearHelper(SPHSystem& sphSystem, int start, int end) {
+	for (int i = start; i < end; i++) {
+		sphSystem.particleTable[i] = NULL;
 	}
+}
 
-	// Populate table
-	Particle* pi;
-	for (int i = 0; i < particles.size(); i++) {
-		pi = particles[i];
+/**
+ * Parallel helper for building table 
+ */
+void buildTableHelper(SPHSystem& sphSystem, int start, int end) {
+	for (int i = start; i < end; i++) {
+		Particle* pi = sphSystem.particles[i];
 
 		// Calculate hash index using hashing formula
-		uint index = getHash(getCell(pi));
+		uint index = getHash(sphSystem.getCell(pi));
 
 		// Setup linked list if need be
-		if (particleTable[index] == NULL) {
+		mtx.lock();
+		if (sphSystem.particleTable[index] == NULL) {
 			pi->next = NULL;
-			particleTable[index] = pi;
+			sphSystem.particleTable[index] = pi;
 		}
 		else {
-			pi->next = particleTable[index];
-			particleTable[index] = pi;
+			pi->next = sphSystem.particleTable[index];
+			sphSystem.particleTable[index] = pi;
 		}
+		mtx.unlock();
 	}
 }
 
-uint SPHSystem::getHash(const glm::ivec3& cell) {
-	return (
-		(uint)(cell.x * 73856093) 
-	  ^ (uint)(cell.y * 19349663) 
-	  ^ (uint)(cell.z * 83492791)
-	) % TABLE_SIZE;
+void SPHSystem::buildTable() {
+	// Parallel empty the table
+	for (int i = 0; i < THREAD_COUNT; i++) {
+		threads[i] = std::thread(tableClearHelper, std::ref(*this), tableBlockBoundaries[i], tableBlockBoundaries[i + 1]);
+	}
+	for (std::thread& thread : threads) {
+		thread.join();
+	}
+
+	// Parallel build table
+	for (int i = 0; i < THREAD_COUNT; i++) {
+		threads[i] = std::thread(buildTableHelper, std::ref(*this), blockBoundaries[i], blockBoundaries[i + 1]);
+	}
+	for (std::thread& thread : threads) {
+		thread.join();
+	}
 }
 
-glm::ivec3 SPHSystem::getCell(Particle* p) {
+glm::ivec3 SPHSystem::getCell(Particle* p) const {
 	return glm::ivec3(p->position.x / h, p->position.y / h, p->position.z / h);
 }
 
