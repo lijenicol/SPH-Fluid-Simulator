@@ -87,8 +87,8 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 	Cam=new Camera;
 	Cam->SetAspect(float(WinX)/float(WinY));
 
-	//init SPH system
-	sphSystem = new SPHSystem(15, 0.02f, 1000, 1, 1.04f, 0.15f, -9.8f, 0.2f);
+    SPHSettings sphSettings(0.02f, 1000, 1, 1.04f, 0.15f, -9.8f, 0.2f);
+	sphSystem = new SPHSystem(15, sphSettings);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -166,7 +166,8 @@ void Tester::Draw() {
 
 		if (ImGui::Button("RESET")) {
 			delete sphSystem;
-			sphSystem = new SPHSystem(numParticles, nMass, nRest, gasConst, nVisco, nh, -9.8, 1.f);
+            SPHSettings sphSettings(nMass, nRest, gasConst, nVisco, nh, -9.8, 1.f);
+			sphSystem = new SPHSystem(numParticles, sphSettings);
 		}
 
 		ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);

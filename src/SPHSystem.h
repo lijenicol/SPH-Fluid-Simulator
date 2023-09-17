@@ -9,21 +9,28 @@
 #include "Particle.h"
 #include "Geometry.h"
 
-#define THREAD_COUNT 8
+/// Settings which can alter the SPH simulation
+struct SPHSettings
+{
+    SPHSettings(
+        float mass, float restDensity, float gasConst, float viscosity,
+        float h, float g, float tension);
+
+    float poly6, spikyGrad, spikyLap, gasConstant, mass, h2, selfDens,
+        restDensity, viscosity, h, g, tension;
+};
 
 class SPHSystem
 {
 private:
 	//particle data
-	unsigned int numParticles;
-	std::vector<std::vector<Particle*>> neighbouringParticles;
+	size_t particleCubeWidth;
 	bool started;
+
+    SPHSettings settings;
 
 	//initializes the particles that will be used
 	void initParticles();
-
-	// Creates hash table for particles in infinite domain
-	void buildTable();
 
 	// Sphere geometry for rendering
 	Geometry* sphere;
@@ -31,27 +38,12 @@ private:
 	glm::mat4* sphereModelMtxs;
 	GLuint vbo;
 
-	// Threads and thread blocks
-	std::thread threads[THREAD_COUNT];
-	int blockBoundaries[THREAD_COUNT + 1];
-	int tableBlockBoundaries[THREAD_COUNT + 1];
-
 public:
-	SPHSystem(unsigned int numParticles, float mass, float restDensity, float gasConst, float viscosity, float h, float g, float tension);
+	SPHSystem(size_t numParticles, const SPHSettings &settings);
 	~SPHSystem();
 
-	//kernel/fluid constants
-	float POLY6, SPIKY_GRAD, SPIKY_LAP, GAS_CONSTANT, MASS, H2, SELF_DENS;
-
-	//fluid properties
-	float restDensity;
-	float viscosity, h, g, tension;
-
-	std::vector<Particle*> particles;
-	Particle** particleTable;
-	glm::ivec3 getCell(Particle *p) const;
-
-	// std::mutex mtx;
+	Particle *particles;
+    size_t particleCount;
 
 	//updates the SPH system
 	void update(float deltaTime);
