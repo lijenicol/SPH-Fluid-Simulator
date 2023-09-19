@@ -88,7 +88,7 @@ Tester::Tester(const char *windowTitle,int argc,char **argv) {
 	Cam->SetAspect(float(WinX)/float(WinY));
 
     SPHSettings sphSettings(0.02f, 1000, 1, 1.04f, 0.15f, -9.8f, 0.2f);
-	sphSystem = new SPHSystem(15, sphSettings);
+	sphSystem = new SPHSystem(15, sphSettings, false);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -152,22 +152,24 @@ void Tester::Draw() {
 		static float nVisco = 3.5f;
 		static float gasConst = 1.f;
 		static int counter = 0;
+        static bool runOnGPU = false;
 
 		ImGui::Begin("SPH debug");                          // Create GUI window
 
 		ImGui::Text("Change values for the simulation. Press RESET to commit changes"); 
 
-		ImGui::SliderInt("Number of Particles", &numParticles, 10, 600);            // Edit number of particles
-		ImGui::SliderFloat("Mass of Particles", &nMass, 0.001f, 1.f);            // Edit mass
-		ImGui::SliderFloat("Support Radius", &nh, 0.001f, 1.f);            // Edit support radius
-		ImGui::SliderFloat("Rest Density", &nRest, 0.001f, 2000.f);            // Edit rest density
-		ImGui::SliderFloat("Viscosity Constant", &nVisco, 0.001f, 5.f);            // Edit viscosity
-		ImGui::SliderFloat("Gas Constant", &gasConst, 0.001f, 5.f);            // Edit gas constant
+		ImGui::SliderInt("Number of Particles", &numParticles, 10, 600);
+		ImGui::SliderFloat("Mass of Particles", &nMass, 0.001f, 1.f);
+		ImGui::SliderFloat("Support Radius", &nh, 0.001f, 1.f);
+		ImGui::SliderFloat("Rest Density", &nRest, 0.001f, 2000.f);
+		ImGui::SliderFloat("Viscosity Constant", &nVisco, 0.001f, 5.f);
+		ImGui::SliderFloat("Gas Constant", &gasConst, 0.001f, 5.f);
+        ImGui::Checkbox("GPU", &runOnGPU);
 
 		if (ImGui::Button("RESET")) {
 			delete sphSystem;
             SPHSettings sphSettings(nMass, nRest, gasConst, nVisco, nh, -9.8, 1.f);
-			sphSystem = new SPHSystem(numParticles, sphSettings);
+			sphSystem = new SPHSystem(numParticles, sphSettings, runOnGPU);
 		}
 
 		ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);

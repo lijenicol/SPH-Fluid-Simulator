@@ -24,9 +24,11 @@ SPHSettings::SPHSettings(
 }
 
 SPHSystem::SPHSystem(
-    size_t particleCubeWidth, const SPHSettings &settings)
+    size_t particleCubeWidth, const SPHSettings &settings,
+    const bool &runOnGPU)
     : particleCubeWidth(particleCubeWidth)
     , settings(settings)
+    , runOnGPU(runOnGPU)
 {
     particleCount = particleCubeWidth * particleCubeWidth * particleCubeWidth;
     particles = (Particle*)malloc(sizeof(Particle) * particleCount);
@@ -96,6 +98,7 @@ void SPHSystem::initParticles()
                 Particle* particle = &particles[particleIndex];
                 particle->position = nParticlePos;
                 particle->velocity = glm::vec3(0);
+                particle->id = (int)particleIndex;
 
                 sphereModelMtxs[particleIndex]
                     = glm::translate(particle->position) * sphereScale;
@@ -109,7 +112,8 @@ void SPHSystem::update(float deltaTime) {
 	// To increase system stability, a fixed deltaTime is set
 	deltaTime = 0.003f;
     updateParticles(
-        particles, sphereModelMtxs, particleCount, settings, deltaTime, false);
+        particles, sphereModelMtxs, particleCount, settings, deltaTime,
+        runOnGPU);
 }
 
 void SPHSystem::draw(const glm::mat4& viewProjMtx, GLuint shader) {

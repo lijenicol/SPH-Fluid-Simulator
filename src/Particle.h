@@ -4,7 +4,11 @@
 struct Particle
 {
 	glm::vec3 position, velocity, acceleration, force;
-	Particle* next;
+
+    int id;
+    /// ID of next particle (-1 for no next)
+	int next;
+
 	float density;
 	float pressure;
 };

@@ -23,11 +23,11 @@ struct SPHSettings
 class SPHSystem
 {
 private:
-	//particle data
-	size_t particleCubeWidth;
-	bool started;
-
     SPHSettings settings;
+    size_t particleCubeWidth;
+
+	bool started;
+    bool runOnGPU;
 
 	//initializes the particles that will be used
 	void initParticles();
@@ -39,7 +39,9 @@ private:
 	GLuint vbo;
 
 public:
-	SPHSystem(size_t numParticles, const SPHSettings &settings);
+	SPHSystem(
+        size_t numParticles, const SPHSettings &settings,
+        const bool &runOnGPU);
 	~SPHSystem();
 
 	Particle *particles;

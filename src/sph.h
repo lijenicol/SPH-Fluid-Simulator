@@ -8,8 +8,6 @@
 #include "Particle.h"
 #include "SPHSystem.h"
 
-#define TABLE_SIZE 1000000
-
 /// Update attrs of particles in place.
 void updateParticles(
     Particle *particles, glm::mat4 *particleTransforms,
