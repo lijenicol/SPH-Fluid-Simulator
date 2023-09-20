@@ -7,6 +7,7 @@ target_sources(sph
         SPHSystem.cpp
         sph.cpp
         Tester.cpp
+        timer.cpp
 )
 
 add_subdirectory(imgui)

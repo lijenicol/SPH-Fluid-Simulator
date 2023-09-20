@@ -7,6 +7,7 @@
 #include <neighborTable.h>
 #include <sph.h>
 #include <kernels/sphGPU.h>
+#include <timer.h>
 
 /// Parallel computation function for calculating density
 /// and pressures of particles in the given SPH System.
@@ -168,33 +169,42 @@ void updateParticlesCPU(
         = createNeighborTable(particles, particleCount, settings);
 
     // Calculate densities and pressures
-    for (int i = 0; i < threadCount; i++) {
-        threads[i] = std::thread(
-            parallelDensityAndPressures, particles, blockBoundaries[i],
-            blockBoundaries[i + 1], particleTable, settings);
-    }
-    for (std::thread& thread : threads) {
-        thread.join();
+    {
+        Timer timer("densities");
+        for (int i = 0; i < threadCount; i++) {
+            threads[i] = std::thread(
+                parallelDensityAndPressures, particles, blockBoundaries[i],
+                blockBoundaries[i + 1], particleTable, settings);
+        }
+        for (std::thread& thread : threads) {
+            thread.join();
+        }
     }
 
     // Calculate forces
-    for (int i = 0; i < threadCount; i++) {
-        threads[i] = std::thread(
-            parallelForces, particles, blockBoundaries[i],
-            blockBoundaries[i + 1], particleTable, settings);
-    }
-    for (std::thread& thread : threads) {
-        thread.join();
+    {
+        Timer timer("forces");
+        for (int i = 0; i < threadCount; i++) {
+            threads[i] = std::thread(
+                parallelForces, particles, blockBoundaries[i],
+                blockBoundaries[i + 1], particleTable, settings);
+        }
+        for (std::thread& thread : threads) {
+            thread.join();
+        }
     }
 
     // Update particle positions
-    for (int i = 0; i < threadCount; i++) {
-        threads[i] = std::thread(
-            parallelUpdateParticlePositions, particles, blockBoundaries[i],
-            blockBoundaries[i + 1], particleTransforms, settings, deltaTime);
-    }
-    for (std::thread& thread : threads) {
-        thread.join();
+    {
+        Timer timer("positions");
+        for (int i = 0; i < threadCount; i++) {
+            threads[i] = std::thread(
+                parallelUpdateParticlePositions, particles, blockBoundaries[i],
+                blockBoundaries[i + 1], particleTransforms, settings, deltaTime);
+        }
+        for (std::thread& thread : threads) {
+            thread.join();
+        }
     }
 
     delete(particleTable);
