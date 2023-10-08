@@ -98,7 +98,7 @@ void SPHSystem::initParticles()
                 Particle* particle = &particles[particleIndex];
                 particle->position = nParticlePos;
                 particle->velocity = glm::vec3(0);
-                particle->id = (int)particleIndex;
+                particle->id = (uint32_t)particleIndex;
 
                 sphereModelMtxs[particleIndex]
                     = glm::translate(particle->position) * sphereScale;

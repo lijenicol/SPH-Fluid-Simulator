@@ -2,6 +2,9 @@
 // Created by lijenicol on 16/09/23.
 //
 
+#include <algorithm>
+#include <numeric>
+
 #include <glm/gtx/norm.hpp>
 
 #include <neighborTable.h>
@@ -9,35 +12,54 @@
 #include <kernels/sphGPU.h>
 #include <timer.h>
 
+
+/// Calculates and stores particle hashes.
+void parallelCalculateHashes(
+    Particle *particles, size_t start, size_t end, const SPHSettings &settings)
+{
+    for (size_t i = start; i < end; i++) {
+        Particle *particle = &particles[i];
+        particle->hash = getHash(getCell(particle, settings.h));
+    }
+}
+
 /// Parallel computation function for calculating density
 /// and pressures of particles in the given SPH System.
 void parallelDensityAndPressures(
-    Particle *particles, int start, int end, const int *particleTable,
+    Particle *particles, const size_t particleCount, const size_t start,
+    const size_t end, const uint32_t *particleTable,
     const SPHSettings &settings)
 {
 	float massPoly6Product = settings.mass * settings.poly6;
 
-	for (int i = start; i < end; i++) {
+	for (size_t piIndex = start; piIndex < end; piIndex++) {
 		float pDensity = 0;
-		Particle* pi = &particles[i];
+		Particle* pi = &particles[piIndex];
 		glm::ivec3 cell = getCell(pi, settings.h);
 
 		for (int x = -1; x <= 1; x++) {
 			for (int y = -1; y <= 1; y++) {
 				for (int z = -1; z <= 1; z++) {
-					glm::ivec3 near_cell = cell + glm::ivec3(x, y, z);
-					uint index = getHash(near_cell);
-                    int pjIndex = particleTable[index];
-
-					// Iterate through cell linked list
-					while (pjIndex != -1) {
+					uint16_t cellHash = getHash(cell + glm::ivec3(x, y, z));
+                    uint32_t pjIndex = particleTable[cellHash];
+                    if (pjIndex == NO_PARTICLE) {
+                        continue;
+                    }
+					while (pjIndex < particleCount) {
+                        if (pjIndex == piIndex) {
+                            pjIndex++;
+                            continue;
+                        }
                         Particle *pj = &particles[pjIndex];
+                        if (pj->hash != cellHash) {
+                            break;
+                        }
 						float dist2 = glm::length2(pj->position - pi->position);
-						if (dist2 < settings.h2 && pi != pj) {
+						if (dist2 < settings.h2) {
 							pDensity += massPoly6Product
                                 * glm::pow(settings.h2 - dist2, 3);
 						}
-						pjIndex = pj->next;
+                        pjIndex++;
 					}
 				}
 			}
@@ -56,26 +78,34 @@ void parallelDensityAndPressures(
 /// Parallel computation function for calculating forces
 /// of particles in the given SPH System.
 void parallelForces(
-    Particle *particles, int start, int end, const int *particleTable,
+    Particle *particles, const size_t particleCount, const size_t start,
+    const size_t end, const uint32_t *particleTable,
     const SPHSettings &settings)
 {
-	for (int i = start; i < end; i++) {
-		Particle* pi = &particles[i];
+	for (size_t piIndex = start; piIndex < end; piIndex++) {
+		Particle* pi = &particles[piIndex];
 		pi->force = glm::vec3(0);
 		glm::ivec3 cell = getCell(pi, settings.h);
 
 		for (int x = -1; x <= 1; x++) {
 			for (int y = -1; y <= 1; y++) {
 				for (int z = -1; z <= 1; z++) {
-					glm::ivec3 near_cell = cell + glm::ivec3(x, y, z);
-					uint index = getHash(near_cell);
-                    int pjIndex = particleTable[index];
-
-					// Iterate through cell linked list
-					while (pjIndex != -1) {
+                    uint16_t cellHash = getHash(cell + glm::ivec3(x, y, z));
+                    uint32_t pjIndex = particleTable[cellHash];
+                    if (pjIndex == NO_PARTICLE) {
+                        continue;
+                    }
+                    while (pjIndex < particleCount) {
+                        if (pjIndex == piIndex) {
+                            pjIndex++;
+                            continue;
+                        }
                         Particle *pj = &particles[pjIndex];
+                        if (pj->hash != cellHash) {
+                            break;
+                        }
 						float dist2 = glm::length2(pj->position - pi->position);
-						if (dist2 < settings.h2 && pi != pj) {
+						if (dist2 < settings.h2) {
 							//unit direction and length
 							float dist = sqrt(dist2);
 							glm::vec3 dir = glm::normalize(pj->position - pi->position);
@@ -90,7 +120,7 @@ void parallelForces(
 							glm::vec3 viscoForce = settings.viscosity * settings.mass * (velocityDif / pj->density) * settings.spikyLap * (settings.h - dist);
 							pi->force += viscoForce;
 						}
-                        pjIndex = pj->next;
+                        pjIndex++;
 					}
 				}
 			}
@@ -101,7 +131,8 @@ void parallelForces(
 /// Parallel computation function moving positions
 /// of particles in the given SPH System.
 void parallelUpdateParticlePositions(
-    Particle *particles, int start, int end, glm::mat4 *particleTransforms,
+    Particle *particles, const size_t particleCount, const size_t start,
+    const size_t end, glm::mat4 *particleTransforms,
     const SPHSettings &settings, const float &deltaTime)
 {
     glm::mat4 sphereScale = glm::scale(glm::vec3(settings.h / 2.f));
@@ -144,8 +175,41 @@ void parallelUpdateParticlePositions(
 			p->velocity.z = -p->velocity.z * elasticity;
 		}
 
-        particleTransforms[i] = glm::translate(p->position) * sphereScale;
+        particleTransforms[p->id]
+            = glm::translate(p->position) * sphereScale;
 	}
+}
+
+/// Sort particles by the particle's hash
+void sortParticles(
+    Particle *particles, glm::mat4 *particleTransforms,
+    const size_t &particleCount)
+{
+    std::vector<size_t> indices(particleCount);
+    std::iota(indices.begin(), indices.end(), 0);
+    std::sort(
+        indices.begin(), indices.end(),
+        [&](size_t i, size_t j) {
+            return particles[i].hash < particles[j].hash;
+        }
+    );
+
+    std::vector<bool> done(particleCount);
+    for (size_t i = 0; i < particleCount; ++i) {
+        if (done[i]) {
+            continue;
+        }
+        done[i] = true;
+        size_t prev_j = i;
+        size_t j = indices[i];
+        while (i != j) {
+            std::swap(particles[prev_j], particles[j]);
+            std::swap(particleTransforms[prev_j], particleTransforms[j]);
+            done[j] = true;
+            prev_j = j;
+            j = indices[j];
+        }
+    }
 }
 
 /// CPU update particles implementation
@@ -165,16 +229,36 @@ void updateParticlesCPU(
     }
     blockBoundaries[threadCount] = particleCount;
 
-    int *particleTable
-        = createNeighborTable(particles, particleCount, settings);
+    // Calculate hashes
+    {
+//        Timer timer("hashes");
+        for (int i = 0; i < threadCount; i++) {
+            threads[i] = std::thread(
+                parallelCalculateHashes, particles, blockBoundaries[i],
+                blockBoundaries[i + 1], settings);
+        }
+        for (std::thread& thread : threads) {
+            thread.join();
+        }
+    }
+
+    // Sort particles and transforms
+    {
+//        Timer timer("sort");
+        sortParticles(particles, particleTransforms, particleCount);
+    }
+
+    uint32_t *particleTable
+        = createNeighborTable(particles, particleCount);
 
     // Calculate densities and pressures
     {
-        Timer timer("densities");
+//        Timer timer("densities");
         for (int i = 0; i < threadCount; i++) {
             threads[i] = std::thread(
-                parallelDensityAndPressures, particles, blockBoundaries[i],
-                blockBoundaries[i + 1], particleTable, settings);
+                parallelDensityAndPressures, particles, particleCount,
+                blockBoundaries[i], blockBoundaries[i + 1], particleTable,
+                settings);
         }
         for (std::thread& thread : threads) {
             thread.join();
@@ -183,10 +267,10 @@ void updateParticlesCPU(
 
     // Calculate forces
     {
-        Timer timer("forces");
+//        Timer timer("forces");
         for (int i = 0; i < threadCount; i++) {
             threads[i] = std::thread(
-                parallelForces, particles, blockBoundaries[i],
+                parallelForces, particles, particleCount, blockBoundaries[i],
                 blockBoundaries[i + 1], particleTable, settings);
         }
         for (std::thread& thread : threads) {
@@ -196,11 +280,12 @@ void updateParticlesCPU(
 
     // Update particle positions
     {
-        Timer timer("positions");
+//        Timer timer("positions");
         for (int i = 0; i < threadCount; i++) {
             threads[i] = std::thread(
-                parallelUpdateParticlePositions, particles, blockBoundaries[i],
-                blockBoundaries[i + 1], particleTransforms, settings, deltaTime);
+                parallelUpdateParticlePositions, particles, particleCount,
+                blockBoundaries[i], blockBoundaries[i + 1], particleTransforms,
+                settings, deltaTime);
         }
         for (std::thread& thread : threads) {
             thread.join();
@@ -216,8 +301,8 @@ void updateParticles(
     float deltaTime, const bool onGPU)
 {
     if (onGPU) {
-        updateParticlesGPU(
-            particles, particleTransforms, particleCount, settings, deltaTime);
+//        updateParticlesGPU(
+//            particles, particleTransforms, particleCount, settings, deltaTime);
     }
     else {
         updateParticlesCPU(
