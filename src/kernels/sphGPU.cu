@@ -5,8 +5,10 @@
 #include <sph.h>
 #include <timer.h>
 
+const size_t MAX_NEIGHBORS = 32;
+
 /// Returns a hash of the cell position
-__device__ uint16_t getHashDevice(const glm::ivec3 &cell)
+__device__ uint32_t getHashDevice(const glm::ivec3 &cell)
 {
     return (
         (uint)(cell.x * 73856093)
@@ -77,30 +79,25 @@ __device__ glm::ivec3 getCellDevice(Particle *p, float h)
 //    createdTable = &particleTable;
 //}
 
-/// Kernel computation function for calculating density
-/// and pressures of particles in the given SPH System.
-__global__ void calculateDensitiesAndPressuresKernel(
+/// Calculates neighbors and stores the result in `neighborList`
+__global__ void initNeighborList(
     Particle *particles, const size_t particleCount,
-    const uint32_t *particleTable, const SPHSettings settings)
+    const uint32_t *hashToParticleMap, const SPHSettings settings,
+    Particle **neighborList)
 {
     size_t piIndex = blockIdx.x * blockDim.x + threadIdx.x;
     if (piIndex > particleCount) {
         return;
     }
     Particle *pi = &particles[piIndex];
-
-    // TODO: Try make use of CUDA constants
-    float massPoly6Product = settings.mass * settings.poly6;
     glm::ivec3 cell = getCellDevice(pi, settings.h);
-
-    float pDensity = 0;
-
+    size_t neighborCount = 0;
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
             for (int z = -1; z <= 1; z++) {
                 uint16_t cellHash
                     = getHashDevice(cell + glm::ivec3(x, y, z));
-                uint32_t pjIndex = particleTable[cellHash];
+                uint32_t pjIndex = hashToParticleMap[cellHash];
                 if (pjIndex == NO_PARTICLE) {
                     continue;
                 }
@@ -115,8 +112,9 @@ __global__ void calculateDensitiesAndPressuresKernel(
                     }
                     float dist2 = glm::length2(pj->position - pi->position);
                     if (dist2 < settings.h2 && pi != pj) {
-                        pDensity += massPoly6Product
-                            * glm::pow(settings.h2 - dist2, 3);
+                        neighborList[piIndex * MAX_NEIGHBORS + neighborCount]
+                            = pj;
+                        neighborCount++;
                     }
                     pjIndex++;
                 }
@@ -124,71 +122,73 @@ __global__ void calculateDensitiesAndPressuresKernel(
         }
     }
 
-    // Include self density (as itself isn't included in neighbour)
-    pi->density = pDensity + settings.selfDens;
+    // Fill the rest of the table with null pointers
+    for (size_t i = neighborCount; i < MAX_NEIGHBORS; i++) {
+        neighborList[piIndex * MAX_NEIGHBORS + i] = nullptr;
+    }
+}
 
-    // Calculate pressure
-    float pPressure
-        = settings.gasConstant * (pi->density - settings.restDensity);
-    pi->pressure = pPressure;
+/// Kernel computation function for calculating density
+/// and pressures of particles in the given SPH System.
+__global__ void calculateDensitiesAndPressuresKernel(
+    Particle *particles, const size_t particleCount,
+    Particle **neighborList, const SPHSettings settings)
+{
+    size_t piIndex = blockIdx.x * blockDim.x + threadIdx.x;
+    if (piIndex > particleCount) {
+        return;
+    }
+    Particle *pi = &particles[piIndex];
+    pi->density = settings.selfDens;
+    glm::ivec3 cell = getCellDevice(pi, settings.h);
+
+    size_t neighborOffset = piIndex * MAX_NEIGHBORS;
+    const Particle *pj = neighborList[neighborOffset];
+    while (pj) {
+        float dist2 = glm::length2(pj->position - pi->position);
+        pi->density += settings.massPoly6Product
+                    * glm::pow(settings.h2 - dist2, 3);
+        neighborOffset++;
+        pj = neighborList[neighborOffset];
+    }
+
+    pi->pressure = settings.gasConstant * (pi->density - settings.restDensity);
 }
 
 /// Parallel computation function for calculating forces
 /// of particles in the given SPH System.
 __global__ void calculateForcesKernel(
     Particle *particles, const size_t particleCount,
-    const uint32_t *particleTable, const SPHSettings settings)
+    Particle **neighborList, const SPHSettings settings)
 {
     size_t piIndex = blockIdx.x * blockDim.x + threadIdx.x;
     if (piIndex > particleCount) {
         return;
     }
     Particle *pi = &particles[piIndex];
-
-    // Another constant
+    pi->force = glm::vec3(0);
     glm::ivec3 cell = getCellDevice(pi, settings.h);
 
-    pi->force = glm::vec3(0);
+    size_t neighborOffset = piIndex * MAX_NEIGHBORS;
+    const Particle *pj = neighborList[neighborOffset];
+    while (pj) {
+        // Unit direction and length
+        float dist = glm::length(pj->position - pi->position);
+        glm::vec3 dir = glm::normalize(pj->position - pi->position);
 
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            for (int z = -1; z <= 1; z++) {
-                uint16_t cellHash
-                    = getHashDevice(cell + glm::ivec3(x, y, z));
-                uint32_t pjIndex = particleTable[cellHash];
-                if (pjIndex == NO_PARTICLE) {
-                    continue;
-                }
-                while (pjIndex < particleCount) {
-                    if (pjIndex == piIndex) {
-                        pjIndex++;
-                        continue;
-                    }
-                    Particle *pj = &particles[pjIndex];
-                    if (pj->hash != cellHash) {
-                        break;
-                    }
-                    float dist2 = glm::length2(pj->position - pi->position);
-                    if (dist2 < settings.h2 && pi != pj) {
-                        //unit direction and length
-                        float dist = sqrt(dist2);
-                        glm::vec3 dir = glm::normalize(pj->position - pi->position);
+        // Apply pressure force
+        glm::vec3 pressureForce = -dir * settings.mass * (pi->pressure + pj->pressure) / (2 * pj->density) * settings.spikyGrad;
+        pressureForce *= std::pow(settings.h - dist, 2);
+        pi->force += pressureForce;
 
-                        //apply pressure force
-                        glm::vec3 pressureForce = -dir * settings.mass * (pi->pressure + pj->pressure) / (2 * pj->density) * settings.spikyGrad;
-                        pressureForce *= std::pow(settings.h - dist, 2);
-                        pi->force += pressureForce;
+        // Apply viscosity force
+        glm::vec3 velocityDif = pj->velocity - pi->velocity;
+        glm::vec3 viscoForce = settings.viscosity * settings.mass * (velocityDif / pj->density) * settings.spikyLap * (settings.h - dist);
+        pi->force += viscoForce;
 
-                        //apply viscosity force
-                        glm::vec3 velocityDif = pj->velocity - pi->velocity;
-                        glm::vec3 viscoForce = settings.viscosity * settings.mass * (velocityDif / pj->density) * settings.spikyLap * (settings.h - dist);
-                        pi->force += viscoForce;
-                    }
-                    pjIndex++;
-                }
-            }
-        }
-	}
+        neighborOffset++;
+        pj = neighborList[neighborOffset];
+    }
 }
 
 /// Parallel computation function moving positions
@@ -206,8 +206,8 @@ __global__ void updateParticlePositionsKernel(
 
     // TODO: These should be constants somewhere else.
     glm::mat4 sphereScale = glm::scale(glm::vec3(settings.h / 2.f));
-    float boxWidth = 3.f;
-    float elasticity = 0.5f;
+    float boxWidth = 8.f;
+    float elasticity = 1.f;
 
     //calculate acceleration and velocity
     glm::vec3 acceleration = p->force / p->density + glm::vec3(0, settings.g, 0);
@@ -250,8 +250,6 @@ void updateParticlesGPU(
     const size_t particleCount, const SPHSettings &settings,
     float deltaTime)
 {
-//    std::cout << "Running on GPU" << std::endl;
-
     const size_t threadCount = std::thread::hardware_concurrency();
     std::thread threads[threadCount];
 
@@ -324,22 +322,29 @@ void updateParticlesGPU(
     size_t threadsPerBlock = 512;
     size_t gridSize = particleCount / threadsPerBlock + 1;
 
+    Particle **dNeighborList;
+    cudaMalloc((void**)&dNeighborList,
+               sizeof(Particle *) * particleCount * MAX_NEIGHBORS);
+
+    {
+        Timer timer("initNeighborList");
+        initNeighborList<<<gridSize, threadsPerBlock>>>(
+            dParticles, particleCount, dParticleTable, settings,
+            dNeighborList);
+        cudaDeviceSynchronize();
+    }
+
     {
         Timer timer("densities");
         calculateDensitiesAndPressuresKernel<<<gridSize, threadsPerBlock>>>(
-            dParticles, particleCount, dParticleTable, settings);
+            dParticles, particleCount, dNeighborList, settings);
         cudaDeviceSynchronize();
     }
-//    // Check for errors
-//    cudaError_t error = cudaGetLastError();
-//    if (error != cudaSuccess) {
-//        printf("CUDA error: %s\n", cudaGetErrorString(error));
-//    }
 
     {
         Timer timer("forces");
         calculateForcesKernel<<<gridSize, threadsPerBlock>>>(
-            dParticles, particleCount, dParticleTable, settings);
+            dParticles, particleCount, dNeighborList, settings);
         cudaDeviceSynchronize();
     }
 
@@ -350,6 +355,12 @@ void updateParticlesGPU(
         cudaDeviceSynchronize();
     }
 
+//    // Check for errors
+//    cudaError_t error = cudaGetLastError();
+//    if (error != cudaSuccess) {
+//        printf("CUDA error: %s\n", cudaGetErrorString(error));
+//    }
+
     cudaMemcpy(particles, dParticles, particlesSize, cudaMemcpyDeviceToHost);
     cudaMemcpy(
         particleTransforms, dParticleTransforms, transformsSize,
@@ -359,4 +370,5 @@ void updateParticlesGPU(
     cudaFree(dParticles);
     cudaFree(dParticleTransforms);
     cudaFree(dParticleTable);
+    cudaFree(dNeighborList);
 }

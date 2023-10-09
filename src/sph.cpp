@@ -136,7 +136,7 @@ void parallelUpdateParticlePositions(
     const SPHSettings &settings, const float &deltaTime)
 {
     glm::mat4 sphereScale = glm::scale(glm::vec3(settings.h / 2.f));
-    float boxWidth = 3.f;
+    float boxWidth = 8.f;
     float elasticity = 0.5f;
 
 	for (size_t i = start; i < end; i++) {
@@ -175,41 +175,20 @@ void parallelUpdateParticlePositions(
 			p->velocity.z = -p->velocity.z * elasticity;
 		}
 
-        particleTransforms[p->id]
+        particleTransforms[i]
             = glm::translate(p->position) * sphereScale;
 	}
 }
 
 /// Sort particles by the particle's hash
-void sortParticles(
-    Particle *particles, glm::mat4 *particleTransforms,
-    const size_t &particleCount)
+void sortParticles(Particle *particles, const size_t &particleCount)
 {
-    std::vector<size_t> indices(particleCount);
-    std::iota(indices.begin(), indices.end(), 0);
     std::sort(
-        indices.begin(), indices.end(),
-        [&](size_t i, size_t j) {
-            return particles[i].hash < particles[j].hash;
+        particles, particles + particleCount,
+        [&](const Particle& i, const Particle& j) {
+            return i.hash < j.hash;
         }
     );
-
-    std::vector<bool> done(particleCount);
-    for (size_t i = 0; i < particleCount; ++i) {
-        if (done[i]) {
-            continue;
-        }
-        done[i] = true;
-        size_t prev_j = i;
-        size_t j = indices[i];
-        while (i != j) {
-            std::swap(particles[prev_j], particles[j]);
-            std::swap(particleTransforms[prev_j], particleTransforms[j]);
-            done[j] = true;
-            prev_j = j;
-            j = indices[j];
-        }
-    }
 }
 
 /// CPU update particles implementation
@@ -242,10 +221,10 @@ void updateParticlesCPU(
         }
     }
 
-    // Sort particles and transforms
+    // Sort particles
     {
 //        Timer timer("sort");
-        sortParticles(particles, particleTransforms, particleCount);
+        sortParticles(particles, particleCount);
     }
 
     uint32_t *particleTable
@@ -253,7 +232,7 @@ void updateParticlesCPU(
 
     // Calculate densities and pressures
     {
-//        Timer timer("densities");
+        Timer timer("densities");
         for (int i = 0; i < threadCount; i++) {
             threads[i] = std::thread(
                 parallelDensityAndPressures, particles, particleCount,
@@ -267,7 +246,7 @@ void updateParticlesCPU(
 
     // Calculate forces
     {
-//        Timer timer("forces");
+        Timer timer("forces");
         for (int i = 0; i < threadCount; i++) {
             threads[i] = std::thread(
                 parallelForces, particles, particleCount, blockBoundaries[i],
@@ -280,7 +259,7 @@ void updateParticlesCPU(
 
     // Update particle positions
     {
-//        Timer timer("positions");
+        Timer timer("positions");
         for (int i = 0; i < threadCount; i++) {
             threads[i] = std::thread(
                 parallelUpdateParticlePositions, particles, particleCount,
@@ -301,8 +280,8 @@ void updateParticles(
     float deltaTime, const bool onGPU)
 {
     if (onGPU) {
-//        updateParticlesGPU(
-//            particles, particleTransforms, particleCount, settings, deltaTime);
+        updateParticlesGPU(
+            particles, particleTransforms, particleCount, settings, deltaTime);
     }
     else {
         updateParticlesCPU(

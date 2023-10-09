@@ -10,6 +10,7 @@ find_package(glm REQUIRED)
 add_executable(sph "")
 target_include_directories(sph PRIVATE ${GLM_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS} ${GLUT_INCLUDE_DIR} src)
 target_link_libraries(sph PRIVATE GLUT::GLUT GLEW::GLEW OpenGL::GL)
+set_property(TARGET sph PROPERTY CUDA_SEPARABLE_COMPILATION ON)
 
 add_subdirectory(src)
 add_subdirectory(resources)

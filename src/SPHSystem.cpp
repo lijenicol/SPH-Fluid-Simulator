@@ -21,6 +21,7 @@ SPHSettings::SPHSettings(
     spikyLap = 45.0f / (PI * pow(h, 6));
     h2 = h * h;
     selfDens = mass * poly6 * pow(h, 6);
+    massPoly6Product = mass * poly6;
 }
 
 SPHSystem::SPHSystem(

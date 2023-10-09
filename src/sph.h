@@ -8,6 +8,13 @@
 #include "Particle.h"
 #include "SPHSystem.h"
 
+/// Calculates and stores particle hashes.
+void parallelCalculateHashes(
+    Particle *particles, size_t start, size_t end, const SPHSettings &settings);
+
+/// Sort particles in place by hash.
+void sortParticles(Particle *particles, const size_t &particleCount);
+
 /// Update attrs of particles in place.
 void updateParticles(
     Particle *particles, glm::mat4 *particleTransforms,

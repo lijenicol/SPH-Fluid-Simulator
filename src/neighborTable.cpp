@@ -2,7 +2,7 @@
 
 #include <neighborTable.h>
 
-uint16_t getHash(const glm::ivec3 &cell)
+uint32_t getHash(const glm::ivec3 &cell)
 {
     return (
         (uint)(cell.x * 73856093)
@@ -27,7 +27,7 @@ uint32_t* createNeighborTable(
 
     uint32_t prevHash = NO_PARTICLE;
     for (size_t i = 0; i < particleCount; ++i) {
-        uint16_t currentHash = sortedParticles[i].hash;
+        uint32_t currentHash = sortedParticles[i].hash;
         if (currentHash != prevHash) {
             particleTable[currentHash] = i;
             prevHash = currentHash;

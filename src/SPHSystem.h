@@ -17,7 +17,7 @@ struct SPHSettings
         float h, float g, float tension);
 
     float poly6, spikyGrad, spikyLap, gasConstant, mass, h2, selfDens,
-        restDensity, viscosity, h, g, tension;
+        restDensity, viscosity, h, g, tension, massPoly6Product;
 };
 
 class SPHSystem
