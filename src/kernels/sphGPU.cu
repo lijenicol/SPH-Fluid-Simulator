@@ -1,8 +1,9 @@
 #include <glm/gtx/norm.hpp>
+#include <thrust/device_vector.h>
+#include <thrust/sort.h>
 
 #include <kernels/sphGPU.h>
 #include <neighborTable.h>
-#include <sph.h>
 #include <timer.h>
 
 const size_t MAX_NEIGHBORS = 32;
@@ -23,61 +24,44 @@ __device__ glm::ivec3 getCellDevice(Particle *p, float h)
     return {p->position.x / h, p->position.y / h, p->position.z / h};
 }
 
-///// Calculate particle hashes
-//__global__ void calculateHashesKernel(
-//    Particle *particles, const size_t particleCount, float h)
-//{
-//    size_t particleIndex = blockIdx.x * blockDim.x + threadIdx.x;
-//    if (particleIndex >= particleCount) {
-//        return;
-//    }
-//    Particle *particle = &particles[particleIndex];
-//    particles->hash = getHashDevice(getCellDevice(particle, h));
-//}
-//
-//struct HashComp
-//{
-//    __host__ __device__ bool operator()(
-//            const Particle& p1, const Particle& p2) {
-//        return p1.hash < p2.hash;
-//    }
-//};
+/// Calculate particle hashes
+__global__ void calculateHashesKernel(
+    Particle *particles, const size_t particleCount, float h)
+{
+    size_t particleIndex = blockIdx.x * blockDim.x + threadIdx.x;
+    if (particleIndex >= particleCount) {
+        return;
+    }
+    Particle *particle = &particles[particleIndex];
+    particle->hash = getHashDevice(getCellDevice(particle, h));
+}
 
-///// Sort particles by hash
-//__global__ void sortParticles(Particle *particles, const size_t particleCount)
-//{
-//    thrust::sort(particles, particles + particleCount, HashComp());
-//}
-//
-///// Constructs the neighbor table and stores the result in `createdTable`.
-//__global__ void constructNeighborTable(
-//    Particle *sortedParticles, const size_t particleCount,
-//    uint32_t **createdTable)
-//{
-//    size_t globalThreadIdx = blockIdx.x * blockDim.x + threadIdx.x;
-//    if (globalThreadIdx >= 1) {
-//        // This method should only be run on one thread. This is here
-//        // for safety.
-//        return;
-//    }
-//
-//    uint32_t *particleTable
-//        = (uint32_t *)malloc(sizeof(uint32_t) * TABLE_SIZE);
-//    for (size_t i = 0; i < TABLE_SIZE; ++i) {
-//        particleTable[i] = NO_PARTICLE;
-//    }
-//
-//    uint32_t prevHash = NO_PARTICLE;
-//    for (size_t i = 0; i < particleCount; ++i) {
-//        uint16_t currentHash = sortedParticles[i].hash;
-//        if (currentHash != prevHash) {
-//            particleTable[currentHash] = i;
-//            prevHash = currentHash;
-//        }
-//    }
-//
-//    createdTable = &particleTable;
-//}
+/// Comparison struct for sorting particles by hash.
+struct HashComp
+{
+    __host__ __device__ bool operator()(
+            const Particle& p1, const Particle& p2) {
+        return p1.hash < p2.hash;
+    }
+};
+
+/// Constructs the neighbor table and stores the result in `createdTable`.
+__global__ void constructNeighborTable(
+    Particle *sortedParticles, const size_t particleCount,
+    uint32_t *particleTable)
+{
+    size_t particleIndex = blockIdx.x * blockDim.x + threadIdx.x;
+    if (particleIndex >= particleCount) {
+        return;
+    }
+
+    uint32_t prevHash = particleIndex == 0
+        ? NO_PARTICLE : sortedParticles[particleIndex-1].hash;
+    uint32_t currentHash = sortedParticles[particleIndex].hash;
+    if (currentHash != prevHash) {
+        particleTable[currentHash] = particleIndex;
+    }
+}
 
 /// Calculates neighbors and stores the result in `neighborList`
 __global__ void initNeighborList(
@@ -206,7 +190,7 @@ __global__ void updateParticlePositionsKernel(
 
     // TODO: These should be constants somewhere else.
     glm::mat4 sphereScale = glm::scale(glm::vec3(settings.h / 2.f));
-    float boxWidth = 8.f;
+    float boxWidth = 10.f;
     float elasticity = 1.f;
 
     //calculate acceleration and velocity
@@ -250,77 +234,37 @@ void updateParticlesGPU(
     const size_t particleCount, const SPHSettings &settings,
     float deltaTime)
 {
-    const size_t threadCount = std::thread::hardware_concurrency();
-    std::thread threads[threadCount];
-
-    size_t blockBoundaries[threadCount + 1];
-    blockBoundaries[0] = 0;
-    size_t blockSize = particleCount / threadCount;
-    for (size_t i = 1; i < threadCount; i++) {
-        blockBoundaries[i] = i * blockSize;
-    }
-    blockBoundaries[threadCount] = particleCount;
-
-    // Calculate hashes
-    {
-        Timer timer("hashes");
-        for (int i = 0; i < threadCount; i++) {
-            threads[i] = std::thread(
-                parallelCalculateHashes, particles, blockBoundaries[i],
-                blockBoundaries[i + 1], settings);
-        }
-        for (std::thread& thread : threads) {
-            thread.join();
-        }
-    }
-
-    // Sort particles
-    {
-        Timer timer("sort");
-        sortParticles(particles, particleCount);
-    }
-
-    // Copy particles
-    Particle *dParticles;
-    size_t particlesSize = sizeof(Particle) * particleCount;
-    cudaMalloc((void**)&dParticles, particlesSize);
-    cudaMemcpy(dParticles, particles, particlesSize, cudaMemcpyHostToDevice);
-
-    // Copy particle transforms
-    glm::mat4 *dParticleTransforms;
-    size_t transformsSize = sizeof(glm::mat4) * particleCount;
-    cudaMalloc((void**)&dParticleTransforms, transformsSize);
-    cudaMemcpy(
-        dParticleTransforms, particleTransforms, transformsSize,
-        cudaMemcpyHostToDevice);
-
-    // Create and copy particle table
-    uint32_t *dParticleTable;
-    {
-        Timer timer("tableCreation");
-        uint32_t *particleTable
-            = createNeighborTable(particles, particleCount);
-        size_t tableSize = sizeof(uint32_t) * TABLE_SIZE;
-        cudaMalloc((void**)&dParticleTable, tableSize);
-        cudaMemcpy(
-            dParticleTable, particleTable, tableSize, cudaMemcpyHostToDevice);
-        // Can free the host table since it won't be of use.
-        free(particleTable);
-    }
-
-//    const size_t blockSize = 512;
-//    size_t gridSize = blockSize / particleCount + 1;
-//    calculateHashesKernel<<<gridSize, blockSize>>>(
-//        dParticles, particleCount, settings.h);
-//    cudaDeviceSynchronize();
-//
-//    uint32_t *dParticleTable;
-//    constructNeighborTable<<<1, 1>>>(
-//        particles, particleCount, &dParticleTable);
-//    cudaDeviceSynchronize();
-
     size_t threadsPerBlock = 512;
     size_t gridSize = particleCount / threadsPerBlock + 1;
+
+    thrust::device_vector<Particle> dParticleVector(
+        particles, particles + particleCount);
+    Particle *dParticles = thrust::raw_pointer_cast(dParticleVector.data());
+
+    {
+        Timer timer("hashes");
+        calculateHashesKernel<<<gridSize, threadsPerBlock>>>(
+            dParticles, particleCount, settings.h);
+        cudaDeviceSynchronize();
+    }
+
+    {
+        Timer timer("sort");
+        thrust::sort(
+            dParticleVector.begin(), dParticleVector.end(), HashComp());
+    }
+
+    // Create and copy particle table
+    thrust::device_vector<uint32_t> dParticleTableVector(TABLE_SIZE, NO_PARTICLE);
+    uint32_t *dParticleTable
+        = thrust::raw_pointer_cast(dParticleTableVector.data());
+//    cudaMalloc((void**)&dParticleTable, sizeof(uint32_t) * TABLE_SIZE);
+    {
+        Timer timer("tableCreation");
+        constructNeighborTable<<<gridSize, threadsPerBlock>>>(
+            dParticles, particleCount, dParticleTable);
+        cudaDeviceSynchronize();
+    }
 
     Particle **dNeighborList;
     cudaMalloc((void**)&dNeighborList,
@@ -348,6 +292,13 @@ void updateParticlesGPU(
         cudaDeviceSynchronize();
     }
 
+    // Copy particle transforms
+    glm::mat4 *dParticleTransforms;
+    size_t transformsSize = sizeof(glm::mat4) * particleCount;
+    cudaMalloc((void**)&dParticleTransforms, transformsSize);
+    cudaMemcpy(dParticleTransforms, particleTransforms, transformsSize,
+               cudaMemcpyHostToDevice);
+
     {
         Timer timer("positions");
         updateParticlePositionsKernel<<<gridSize, threadsPerBlock>>>(
@@ -355,20 +306,11 @@ void updateParticlesGPU(
         cudaDeviceSynchronize();
     }
 
-//    // Check for errors
-//    cudaError_t error = cudaGetLastError();
-//    if (error != cudaSuccess) {
-//        printf("CUDA error: %s\n", cudaGetErrorString(error));
-//    }
+    cudaMemcpy(particles, dParticles, sizeof(Particle) * particleCount,
+               cudaMemcpyDeviceToHost);
+    cudaMemcpy(particleTransforms, dParticleTransforms, transformsSize,
+               cudaMemcpyDeviceToHost);
 
-    cudaMemcpy(particles, dParticles, particlesSize, cudaMemcpyDeviceToHost);
-    cudaMemcpy(
-        particleTransforms, dParticleTransforms, transformsSize,
-        cudaMemcpyDeviceToHost);
-
-    // Free allocated memory
-    cudaFree(dParticles);
     cudaFree(dParticleTransforms);
-    cudaFree(dParticleTable);
     cudaFree(dNeighborList);
 }
