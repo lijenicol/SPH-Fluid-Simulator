@@ -22,6 +22,7 @@ SPHSettings::SPHSettings(
     h2 = h * h;
     selfDens = mass * poly6 * pow(h, 6);
     massPoly6Product = mass * poly6;
+    sphereScale = glm::scale(glm::vec3(h / 2.f));
 }
 
 SPHSystem::SPHSystem(
@@ -36,7 +37,6 @@ SPHSystem::SPHSystem(
 
     // Load in sphere geometry and allocate matrice space
     sphere = new Geometry("resources/lowsphere.obj");
-    sphereScale = glm::scale(glm::vec3(settings.h / 2.f));
     sphereModelMtxs = new glm::mat4[particleCount];
 
     initParticles();
@@ -101,7 +101,7 @@ void SPHSystem::initParticles()
                 particle->velocity = glm::vec3(0);
 
                 sphereModelMtxs[particleIndex]
-                    = glm::translate(particle->position) * sphereScale;
+                    = glm::translate(particle->position) * settings.sphereScale;
 			}
 		}
 	}

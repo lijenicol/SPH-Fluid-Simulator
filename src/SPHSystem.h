@@ -16,6 +16,7 @@ struct SPHSettings
         float mass, float restDensity, float gasConst, float viscosity,
         float h, float g, float tension);
 
+    glm::mat4 sphereScale;
     float poly6, spikyGrad, spikyLap, gasConstant, mass, h2, selfDens,
         restDensity, viscosity, h, g, tension, massPoly6Product;
 };
@@ -34,7 +35,6 @@ private:
 
 	// Sphere geometry for rendering
 	Geometry* sphere;
-	glm::mat4 sphereScale;
 	glm::mat4* sphereModelMtxs;
 	GLuint vbo;
 

@@ -2,11 +2,14 @@
 #include <thrust/device_vector.h>
 #include <thrust/sort.h>
 
-#include <kernels/sphGPU.h>
 #include <neighborTable.h>
-#include <timer.h>
+#include <kernels/sphGPU.h>
 
-const size_t MAX_NEIGHBORS = 32;
+static const float BOX_WIDTH = 10.f;
+static const float BOX_COLLISION_ELASTICITY = 1.f;
+static const float BOX_COLLISION_OFFSET = 0.00001;
+
+static const uint16_t MAX_NEIGHBORS = 32;
 
 /// Returns a hash of the cell position
 __device__ uint32_t getHashDevice(const glm::ivec3 &cell)
@@ -45,10 +48,11 @@ struct HashComp
     }
 };
 
-/// Constructs the neighbor table and stores the result in `createdTable`.
-__global__ void constructNeighborTable(
+/// Constructs the hash to particle map, storing the result
+/// in `hashToParticleMap`.
+__global__ void constructHashToParticleMap(
     Particle *sortedParticles, const size_t particleCount,
-    uint32_t *particleTable)
+    uint32_t *hashToParticleMap)
 {
     size_t particleIndex = blockIdx.x * blockDim.x + threadIdx.x;
     if (particleIndex >= particleCount) {
@@ -59,7 +63,7 @@ __global__ void constructNeighborTable(
         ? NO_PARTICLE : sortedParticles[particleIndex-1].hash;
     uint32_t currentHash = sortedParticles[particleIndex].hash;
     if (currentHash != prevHash) {
-        particleTable[currentHash] = particleIndex;
+        hashToParticleMap[currentHash] = particleIndex;
     }
 }
 
@@ -161,13 +165,19 @@ __global__ void calculateForcesKernel(
         glm::vec3 dir = glm::normalize(pj->position - pi->position);
 
         // Apply pressure force
-        glm::vec3 pressureForce = -dir * settings.mass * (pi->pressure + pj->pressure) / (2 * pj->density) * settings.spikyGrad;
+        glm::vec3 pressureForce
+            = -dir * settings.mass
+              * (pi->pressure + pj->pressure) / (2 * pj->density)
+              * settings.spikyGrad;
         pressureForce *= std::pow(settings.h - dist, 2);
         pi->force += pressureForce;
 
         // Apply viscosity force
         glm::vec3 velocityDif = pj->velocity - pi->velocity;
-        glm::vec3 viscoForce = settings.viscosity * settings.mass * (velocityDif / pj->density) * settings.spikyLap * (settings.h - dist);
+        glm::vec3 viscoForce
+            = settings.viscosity * settings.mass
+              * (velocityDif / pj->density) * settings.spikyLap
+              * (settings.h - dist);
         pi->force += viscoForce;
 
         neighborOffset++;
@@ -188,13 +198,9 @@ __global__ void updateParticlePositionsKernel(
     }
     Particle *p = &particles[pIndex];
 
-    // TODO: These should be constants somewhere else.
-    glm::mat4 sphereScale = glm::scale(glm::vec3(settings.h / 2.f));
-    float boxWidth = 10.f;
-    float elasticity = 1.f;
-
     //calculate acceleration and velocity
-    glm::vec3 acceleration = p->force / p->density + glm::vec3(0, settings.g, 0);
+    glm::vec3 acceleration
+        = p->force / p->density + glm::vec3(0, settings.g, 0);
     p->velocity += acceleration * deltaTime;
 
     // Update position
@@ -202,31 +208,37 @@ __global__ void updateParticlePositionsKernel(
 
     // Handle collisions with box
     if (p->position.y < settings.h) {
-        p->position.y = -p->position.y + 2 * settings.h + 0.0001f;
-        p->velocity.y = -p->velocity.y * elasticity;
+        p->position.y = -p->position.y + 2 * settings.h
+                        + BOX_COLLISION_OFFSET;
+        p->velocity.y = -p->velocity.y * BOX_COLLISION_ELASTICITY;
     }
 
-    if (p->position.x < settings.h - boxWidth) {
-        p->position.x = -p->position.x + 2 * (settings.h - boxWidth) + 0.0001f;
-        p->velocity.x = -p->velocity.x * elasticity;
+    if (p->position.x < settings.h - BOX_WIDTH) {
+        p->position.x = -p->position.x + 2 * (settings.h - BOX_WIDTH)
+                        + BOX_COLLISION_OFFSET;
+        p->velocity.x = -p->velocity.x * BOX_COLLISION_ELASTICITY;
     }
 
-    if (p->position.x > -settings.h + boxWidth) {
-        p->position.x = -p->position.x + 2 * -(settings.h - boxWidth) - 0.0001f;
-        p->velocity.x = -p->velocity.x * elasticity;
+    if (p->position.x > -settings.h + BOX_WIDTH) {
+        p->position.x = -p->position.x + 2 * -(settings.h - BOX_WIDTH)
+                        - BOX_COLLISION_OFFSET;
+        p->velocity.x = -p->velocity.x * BOX_COLLISION_ELASTICITY;
     }
 
-    if (p->position.z < settings.h - boxWidth) {
-        p->position.z = -p->position.z + 2 * (settings.h - boxWidth) + 0.0001f;
-        p->velocity.z = -p->velocity.z * elasticity;
+    if (p->position.z < settings.h - BOX_WIDTH) {
+        p->position.z = -p->position.z + 2 * (settings.h - BOX_WIDTH)
+                        + BOX_COLLISION_OFFSET;
+        p->velocity.z = -p->velocity.z * BOX_COLLISION_ELASTICITY;
     }
 
-    if (p->position.z > -settings.h + boxWidth) {
-        p->position.z = -p->position.z + 2 * -(settings.h - boxWidth) - 0.0001f;
-        p->velocity.z = -p->velocity.z * elasticity;
+    if (p->position.z > -settings.h + BOX_WIDTH) {
+        p->position.z = -p->position.z + 2 * -(settings.h - BOX_WIDTH)
+                        - BOX_COLLISION_OFFSET;
+        p->velocity.z = -p->velocity.z * BOX_COLLISION_ELASTICITY;
     }
 
-    particleTransforms[pIndex] = glm::translate(p->position) * sphereScale;
+    particleTransforms[pIndex]
+        = glm::translate(p->position) * settings.sphereScale;
 }
 
 void updateParticlesGPU(
@@ -237,80 +249,61 @@ void updateParticlesGPU(
     size_t threadsPerBlock = 512;
     size_t gridSize = particleCount / threadsPerBlock + 1;
 
+    // Start by copying particles to GPU.
     thrust::device_vector<Particle> dParticleVector(
         particles, particles + particleCount);
     Particle *dParticles = thrust::raw_pointer_cast(dParticleVector.data());
 
-    {
-        Timer timer("hashes");
-        calculateHashesKernel<<<gridSize, threadsPerBlock>>>(
-            dParticles, particleCount, settings.h);
-        cudaDeviceSynchronize();
-    }
+    // Set up hashes for all particles
+    calculateHashesKernel<<<gridSize, threadsPerBlock>>>(
+        dParticles, particleCount, settings.h);
+    cudaDeviceSynchronize();
 
-    {
-        Timer timer("sort");
-        thrust::sort(
-            dParticleVector.begin(), dParticleVector.end(), HashComp());
-    }
+    // Sort particles by hash.
+    thrust::sort(
+        dParticleVector.begin(), dParticleVector.end(), HashComp());
 
-    // Create and copy particle table
-    thrust::device_vector<uint32_t> dParticleTableVector(TABLE_SIZE, NO_PARTICLE);
-    uint32_t *dParticleTable
-        = thrust::raw_pointer_cast(dParticleTableVector.data());
-//    cudaMalloc((void**)&dParticleTable, sizeof(uint32_t) * TABLE_SIZE);
-    {
-        Timer timer("tableCreation");
-        constructNeighborTable<<<gridSize, threadsPerBlock>>>(
-            dParticles, particleCount, dParticleTable);
-        cudaDeviceSynchronize();
-    }
+    // Set up the hash->particle map.
+    thrust::device_vector<uint32_t> dHashToParticleMapVector(
+        TABLE_SIZE, NO_PARTICLE);
+    uint32_t *dHashToParticleMap
+        = thrust::raw_pointer_cast(dHashToParticleMapVector.data());
+    constructHashToParticleMap<<<gridSize, threadsPerBlock>>>(
+        dParticles, particleCount, dHashToParticleMap);
+    cudaDeviceSynchronize();
 
+    // Calculate neighbors for every particle.
     Particle **dNeighborList;
     cudaMalloc((void**)&dNeighborList,
                sizeof(Particle *) * particleCount * MAX_NEIGHBORS);
+    initNeighborList<<<gridSize, threadsPerBlock>>>(
+        dParticles, particleCount, dHashToParticleMap, settings,
+        dNeighborList);
+    cudaDeviceSynchronize();
 
-    {
-        Timer timer("initNeighborList");
-        initNeighborList<<<gridSize, threadsPerBlock>>>(
-            dParticles, particleCount, dParticleTable, settings,
-            dNeighborList);
-        cudaDeviceSynchronize();
-    }
+    // Calculate densities and pressures.
+    calculateDensitiesAndPressuresKernel<<<gridSize, threadsPerBlock>>>(
+        dParticles, particleCount, dNeighborList, settings);
+    cudaDeviceSynchronize();
 
-    {
-        Timer timer("densities");
-        calculateDensitiesAndPressuresKernel<<<gridSize, threadsPerBlock>>>(
-            dParticles, particleCount, dNeighborList, settings);
-        cudaDeviceSynchronize();
-    }
+    // Calculate forces.
+    calculateForcesKernel<<<gridSize, threadsPerBlock>>>(
+        dParticles, particleCount, dNeighborList, settings);
+    cudaDeviceSynchronize();
 
-    {
-        Timer timer("forces");
-        calculateForcesKernel<<<gridSize, threadsPerBlock>>>(
-            dParticles, particleCount, dNeighborList, settings);
-        cudaDeviceSynchronize();
-    }
+    cudaFree(dNeighborList);
 
-    // Copy particle transforms
+    // Update positions and transforms.
     glm::mat4 *dParticleTransforms;
     size_t transformsSize = sizeof(glm::mat4) * particleCount;
     cudaMalloc((void**)&dParticleTransforms, transformsSize);
-    cudaMemcpy(dParticleTransforms, particleTransforms, transformsSize,
-               cudaMemcpyHostToDevice);
-
-    {
-        Timer timer("positions");
-        updateParticlePositionsKernel<<<gridSize, threadsPerBlock>>>(
-            dParticles, particleCount, dParticleTransforms, settings, deltaTime);
-        cudaDeviceSynchronize();
-    }
+    updateParticlePositionsKernel<<<gridSize, threadsPerBlock>>>(
+        dParticles, particleCount, dParticleTransforms, settings, deltaTime);
+    cudaDeviceSynchronize();
 
     cudaMemcpy(particles, dParticles, sizeof(Particle) * particleCount,
                cudaMemcpyDeviceToHost);
     cudaMemcpy(particleTransforms, dParticleTransforms, transformsSize,
                cudaMemcpyDeviceToHost);
-
     cudaFree(dParticleTransforms);
-    cudaFree(dNeighborList);
 }
